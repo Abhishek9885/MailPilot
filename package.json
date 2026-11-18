@@ -1,0 +1,57 @@
+{
+  "name": "mailpilot-ai",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.13 <23",
+    "npm": ">=10.9 <12"
+  },
+  "workspaces": [
+    "apps/web",
+    "apps/api",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev:web": "npm --prefix apps/web run dev",
+    "dev:api": "npm --prefix apps/api run dev",
+    "dev:ai": "dotenv -e .env -- uv run --directory apps/ai --project . python -m mailpilot_ai",
+    "dev:all": "concurrently -k -n web,api,ai -c blue,green,magenta \"npm run dev:web\" \"npm --prefix apps/api run dev:serve\" \"npm run dev:ai\"",
+    "lint": "npm run lint:ts && npm run lint:py",
+    "lint:ts": "npm run lint --workspaces --if-present",
+    "lint:py": "uv run --directory apps/ai --project . ruff check src tests",
+    "typecheck": "npm run typecheck:ts && npm run typecheck:py",
+    "typecheck:ts": "npm run db:generate && npm run build --workspace @mailpilot/shared && npm run typecheck:seed && npm run typecheck --workspaces --if-present",
+    "typecheck:seed": "tsc --noEmit -p prisma/tsconfig.json",
+    "typecheck:py": "uv run --directory apps/ai --project . mypy src",
+    "test": "npm run test:ts && npm run test:py",
+    "test:ts": "npm run build --workspace @mailpilot/shared && npm run test --workspaces --if-present",
+    "test:py": "uv run --directory apps/ai --project . pytest",
+    "build": "npm run db:generate && npm run build --workspace @mailpilot/shared && npm run build --workspace @mailpilot/api && npm run build --workspace @mailpilot/web",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f db",
+    "db:generate": "prisma generate",
+    "db:validate": "prisma validate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:ai:migrate": "dotenv -e .env -- uv run --directory apps/ai --project . python -m mailpilot_ai.vector_store.migrations",
+    "db:seed": "prisma db seed",
+    "test:db": "npm run test:db --workspace @mailpilot/api",
+    "eval:analysis": "uv run --directory apps/ai --project . python scripts/evaluate_email_analysis.py",
+    "eval:rag": "uv run --directory apps/ai --project . python scripts/evaluate_rag.py",
+    "visualize:rag": "uv run --directory apps/ai --project . python scripts/render_rag_workflow.py"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.8",
+    "concurrently": "9.2.5",
+    "dotenv": "16.6.1",
+    "dotenv-cli": "8.0.0",
+    "eslint": "10.10.0",
+    "globals": "16.4.0",
+    "prisma": "7.10.1",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.1",
+    "vitest": "4.1.12"
+  }
+}

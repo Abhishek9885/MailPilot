@@ -1,0 +1,41 @@
+﻿---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	interpret_request(interpret_request)
+	classify_intent(classify_intent)
+	create_plan(create_plan)
+	validate_plan(validate_plan)
+	gmail_search(gmail_search)
+	tool_failure(tool_failure)
+	assemble_evidence(assemble_evidence)
+	rag_answer(rag_answer)
+	abstain(abstain)
+	clarify(clarify)
+	drafting_notice(drafting_notice)
+	return_response(return_response)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> interpret_request;
+	abstain --> return_response;
+	assemble_evidence -.-> abstain;
+	assemble_evidence -.-> rag_answer;
+	clarify --> return_response;
+	classify_intent --> create_plan;
+	create_plan --> validate_plan;
+	drafting_notice --> return_response;
+	gmail_search -.-> assemble_evidence;
+	gmail_search -.-> tool_failure;
+	interpret_request --> classify_intent;
+	rag_answer --> return_response;
+	tool_failure --> return_response;
+	validate_plan -.-> clarify;
+	validate_plan -.-> drafting_notice;
+	validate_plan -.-> gmail_search;
+	return_response --> __end__;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+

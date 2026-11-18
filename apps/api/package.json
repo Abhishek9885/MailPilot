@@ -1,0 +1,40 @@
+{
+  "name": "@mailpilot/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "predev": "npm run db:generate --prefix ../..",
+    "dev": "dotenv -e ../../.env -- tsx watch src/server.ts",
+    "predev:serve": "npm run db:generate --prefix ../..",
+    "dev:serve": "dotenv -e ../../.env -- tsx src/server.ts",
+    "prebuild": "npm run db:generate --prefix ../..",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:db": "dotenv -e ../../.env.test -- vitest run tests/database.integration.test.ts"
+  },
+  "dependencies": {
+    "@mailpilot/shared": "0.1.0",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "cors": "2.8.5",
+    "express": "5.2.1",
+    "openid-client": "6.8.8",
+    "pg": "8.16.3",
+    "pino": "9.9.0",
+    "postal-mime": "4.1.4",
+    "sanitize-html": "2.18.1"
+  },
+  "devDependencies": {
+    "@types/cors": "2.8.19",
+    "@types/express": "5.0.3",
+    "@types/node": "22.18.8",
+    "@types/pg": "8.15.5",
+    "@types/sanitize-html": "2.16.2",
+    "@types/supertest": "6.0.3",
+    "supertest": "7.1.4"
+  }
+}

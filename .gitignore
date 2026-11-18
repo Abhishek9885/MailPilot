@@ -1,0 +1,38 @@
+# Dependencies and generated output
+node_modules/
+**/node_modules/
+**/.next/
+**/out/
+**/dist/
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+/.cache/
+pytest-cache-files-*/
+apps/api/src/generated/prisma/
+*.tsbuildinfo
+*.py[cod]
+coverage/
+htmlcov/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.test.example
+*.pem
+*.key
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local database volumes and logs
+.data/
+*.log
+npm-debug.log*

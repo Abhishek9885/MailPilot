@@ -1,0 +1,487 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../apps/api/src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["app"]
+}
+
+enum UserStatus {
+  active
+  disabled
+
+  @@map("user_status")
+  @@schema("app")
+}
+
+enum GoogleConnectionStatus {
+  active
+  reauth_required
+  disconnected
+
+  @@map("google_connection_status")
+  @@schema("app")
+}
+
+enum GmailSyncMode {
+  initial
+  incremental
+
+  @@map("gmail_sync_mode")
+  @@schema("app")
+}
+
+enum GmailSyncRunStatus {
+  pending
+  running
+  partial
+  completed
+  cancelled
+  resync_required
+  failed
+
+  @@map("gmail_sync_run_status")
+  @@schema("app")
+}
+
+enum AnalysisStatus {
+  queued
+  completed
+  failed
+
+  @@map("analysis_status")
+  @@schema("app")
+}
+
+enum ReplyDraftStatus {
+  suggestion
+  dismissed
+
+  @@map("reply_draft_status")
+  @@schema("app")
+}
+
+enum EmailChunkStatus {
+  active
+  deleted
+
+  @@map("email_chunk_status")
+  @@schema("app")
+}
+
+enum AgentRunStatus {
+  queued
+  running
+  completed
+  failed
+  cancelled
+
+  @@map("agent_run_status")
+  @@schema("app")
+}
+
+enum PendingActionStatus {
+  pending
+  approved
+  rejected
+  expired
+  cancelled
+
+  @@map("pending_action_status")
+  @@schema("app")
+}
+
+enum TaskStatus {
+  pending_review
+  active
+  completed
+  dismissed
+
+  @@map("task_status")
+  @@schema("app")
+}
+
+enum FollowUpStatus {
+  planned
+  completed
+  cancelled
+
+  @@map("follow_up_status")
+  @@schema("app")
+}
+
+enum AuditActorType {
+  user
+  system
+  agent
+  administrator
+
+  @@map("audit_actor_type")
+  @@schema("app")
+}
+
+model User {
+  id              String     @id @default(uuid()) @db.Uuid
+  emailNormalized String     @unique(map: "users_email_normalized_key") @map("email_normalized") @db.VarChar(320)
+  status          UserStatus @default(active)
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  authenticationIdentities AuthenticationIdentity[]
+  sessions                 Session[]
+  googleConnections        GoogleConnection[]
+  emails                   Email[]
+  gmailSyncRuns            GmailSyncRun[]
+  analyses                 Analysis[]
+  replyDrafts              ReplyDraft[]
+  emailChunks              EmailChunk[]
+  agentRuns                AgentRun[]
+  pendingActions           PendingAction[]
+  tasks                    Task[]
+  followUps                FollowUp[]
+  auditLogs                AuditLog[]
+
+  @@map("users")
+  @@schema("app")
+}
+
+model AuthenticationIdentity {
+  id                  String    @id @default(uuid()) @db.Uuid
+  userId              String    @map("user_id") @db.Uuid
+  provider            String    @db.VarChar(64)
+  providerSubject     String    @map("provider_subject") @db.VarChar(255)
+  emailNormalized     String?   @map("email_normalized") @db.VarChar(320)
+  emailVerifiedAt     DateTime? @map("email_verified_at") @db.Timestamptz(6)
+  lastAuthenticatedAt DateTime? @map("last_authenticated_at") @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([provider, providerSubject], map: "authentication_identities_provider_subject_key")
+  @@index([userId, provider], map: "authentication_identities_user_provider_idx")
+  @@map("authentication_identities")
+  @@schema("app")
+}
+
+model Session {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  tokenHash     String    @unique(map: "sessions_token_hash_key") @map("token_hash") @db.Char(64)
+  csrfTokenHash String?   @map("csrf_token_hash") @db.Char(64)
+  expiresAt     DateTime  @map("expires_at") @db.Timestamptz(6)
+  lastSeenAt    DateTime? @map("last_seen_at") @db.Timestamptz(6)
+  revokedAt     DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userId, expiresAt], map: "sessions_user_expires_at_idx")
+  @@index([expiresAt], map: "sessions_expires_at_idx")
+  @@map("sessions")
+  @@schema("app")
+}
+
+model GoogleConnection {
+  id                        String                 @id @default(uuid()) @db.Uuid
+  userId                    String                 @unique(map: "google_connections_user_id_key") @map("user_id") @db.Uuid
+  providerSubject           String                 @unique(map: "google_connections_provider_subject_key") @map("provider_subject") @db.VarChar(255)
+  providerEmailNormalized   String                 @map("provider_email_normalized") @db.VarChar(320)
+  refreshTokenCiphertext    String?                @map("refresh_token_ciphertext") @db.Text
+  refreshTokenNonce         String?                @map("refresh_token_nonce") @db.VarChar(16)
+  refreshTokenAuthTag       String?                @map("refresh_token_auth_tag") @db.VarChar(22)
+  tokenEncryptionKeyVersion String?                @map("token_encryption_key_version") @db.VarChar(64)
+  status                    GoogleConnectionStatus @default(active)
+  grantedScopes             String[]               @default([]) @map("granted_scopes")
+  connectedAt               DateTime               @default(now()) @map("connected_at") @db.Timestamptz(6)
+  disconnectedAt            DateTime?              @map("disconnected_at") @db.Timestamptz(6)
+  lastSuccessfulSyncAt      DateTime?              @map("last_successful_sync_at") @db.Timestamptz(6)
+  gmailHistoryId            String?                @map("gmail_history_id") @db.VarChar(64)
+  initialSyncCompletedAt    DateTime?              @map("initial_sync_completed_at") @db.Timestamptz(6)
+  createdAt                 DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  emails    Email[]
+  syncRuns  GmailSyncRun[]
+  agentRuns AgentRun[]
+
+  @@unique([userId, id], map: "google_connections_user_id_id_key")
+  @@map("google_connections")
+  @@schema("app")
+}
+
+model Email {
+  id                    String    @id @default(uuid()) @db.Uuid
+  userId                String    @map("user_id") @db.Uuid
+  googleConnectionId    String    @map("google_connection_id") @db.Uuid
+  providerMessageId     String    @map("provider_message_id") @db.VarChar(255)
+  providerThreadId      String    @map("provider_thread_id") @db.VarChar(255)
+  senderName            String?   @map("sender_name") @db.Text
+  senderEmailNormalized String?   @map("sender_email_normalized") @db.VarChar(320)
+  subject               String    @db.Text
+  bodyText              String    @map("body_text") @db.Text
+  bodyHtml              String?   @map("body_html") @db.Text
+  attachmentMetadata    Json      @default("[]") @map("attachment_metadata") @db.JsonB
+  bodyHash              String    @map("body_hash") @db.Char(64)
+  labels                String[]  @default([])
+  receivedAt            DateTime  @map("received_at") @db.Timestamptz(6)
+  sourceRevision        Int       @default(1) @map("source_revision")
+  deletedAt             DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  googleConnection GoogleConnection @relation(fields: [userId, googleConnectionId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+  analyses         Analysis[]
+  replyDrafts      ReplyDraft[]
+  chunks           EmailChunk[]
+  tasks            Task[]
+  followUps        FollowUp[]
+
+  @@unique([googleConnectionId, providerMessageId], map: "emails_connection_provider_message_key")
+  @@unique([userId, id], map: "emails_user_id_id_key")
+  @@index([userId, receivedAt(sort: Desc)], map: "emails_user_received_at_idx")
+  @@index([googleConnectionId, providerThreadId, receivedAt(sort: Desc)], map: "emails_connection_thread_received_idx")
+  @@map("emails")
+  @@schema("app")
+}
+
+model GmailSyncRun {
+  id                 String             @id @default(uuid()) @db.Uuid
+  userId             String             @map("user_id") @db.Uuid
+  googleConnectionId String             @map("google_connection_id") @db.Uuid
+  activeConnectionId String?            @unique(map: "gmail_sync_runs_active_connection_key") @map("active_connection_id") @db.Uuid
+  mode               GmailSyncMode
+  status             GmailSyncRunStatus @default(pending)
+  startHistoryId     String?            @map("start_history_id") @db.VarChar(64)
+  targetHistoryId    String?            @map("target_history_id") @db.VarChar(64)
+  pageToken          String?            @map("page_token") @db.Text
+  nextPageToken      String?            @map("next_page_token") @db.Text
+  pendingMessageIds  Json               @default("[]") @map("pending_message_ids") @db.JsonB
+  maxMessages        Int                @default(500) @map("max_messages")
+  listedCount        Int                @default(0) @map("listed_count")
+  processedCount     Int                @default(0) @map("processed_count")
+  failedCount        Int                @default(0) @map("failed_count")
+  limitReached       Boolean            @default(false) @map("limit_reached")
+  cancelRequestedAt  DateTime?          @map("cancel_requested_at") @db.Timestamptz(6)
+  leaseToken         String?            @map("lease_token") @db.VarChar(36)
+  leaseExpiresAt     DateTime?          @map("lease_expires_at") @db.Timestamptz(6)
+  safeErrorCode      String?            @map("safe_error_code") @db.VarChar(128)
+  startedAt          DateTime           @default(now()) @map("started_at") @db.Timestamptz(6)
+  completedAt        DateTime?          @map("completed_at") @db.Timestamptz(6)
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  googleConnection GoogleConnection @relation(fields: [userId, googleConnectionId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([userId, id], map: "gmail_sync_runs_user_id_id_key")
+  @@index([userId, createdAt(sort: Desc)], map: "gmail_sync_runs_user_created_idx")
+  @@index([googleConnectionId, status], map: "gmail_sync_runs_connection_status_idx")
+  @@map("gmail_sync_runs")
+  @@schema("app")
+}
+
+model Analysis {
+  id             String         @id @default(uuid()) @db.Uuid
+  userId         String         @map("user_id") @db.Uuid
+  emailId        String         @map("email_id") @db.Uuid
+  sourceRevision Int            @map("source_revision")
+  schemaVersion  String         @map("schema_version") @db.VarChar(64)
+  modelVersion   String         @map("model_version") @db.VarChar(128)
+  status         AnalysisStatus @default(queued)
+  result         Json?
+  safeErrorCode  String?        @map("safe_error_code") @db.VarChar(128)
+  completedAt    DateTime?      @map("completed_at") @db.Timestamptz(6)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  email Email @relation(fields: [userId, emailId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([emailId, sourceRevision, schemaVersion, modelVersion], map: "analyses_email_revision_schema_model_key")
+  @@index([userId, status, createdAt(sort: Desc)], map: "analyses_user_status_created_idx")
+  @@index([emailId, sourceRevision], map: "analyses_email_revision_idx")
+  @@map("analyses")
+  @@schema("app")
+}
+
+model ReplyDraft {
+  id             String           @id @default(uuid()) @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  emailId        String           @map("email_id") @db.Uuid
+  sourceRevision Int              @map("source_revision")
+  schemaVersion  String           @map("schema_version") @db.VarChar(64)
+  provider       String           @db.VarChar(64)
+  modelVersion   String           @map("model_version") @db.VarChar(128)
+  subject        String           @db.Text
+  bodyText       String           @map("body_text") @db.Text
+  claims         Json             @default("[]") @db.JsonB
+  uncertainties  Json             @default("[]") @db.JsonB
+  sourceMessages Json             @default("[]") @map("source_messages") @db.JsonB
+  status         ReplyDraftStatus @default(suggestion)
+  edited         Boolean          @default(false)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  email Email @relation(fields: [userId, emailId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userId, emailId, createdAt(sort: Desc)], map: "reply_drafts_user_email_created_idx")
+  @@index([userId, status, createdAt(sort: Desc)], map: "reply_drafts_user_status_created_idx")
+  @@map("reply_drafts")
+  @@schema("app")
+}
+
+model EmailChunk {
+  id             String           @id @default(uuid()) @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  emailId        String           @map("email_id") @db.Uuid
+  sourceRevision Int              @map("source_revision")
+  chunkerVersion String           @map("chunker_version") @db.VarChar(64)
+  ordinal        Int
+  startChar      Int              @map("start_char")
+  endChar        Int              @map("end_char")
+  content        String           @db.Text
+  contentHash    String           @map("content_hash") @db.Char(64)
+  status         EmailChunkStatus @default(active)
+  deletedAt      DateTime?        @map("deleted_at") @db.Timestamptz(6)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  email Email @relation(fields: [userId, emailId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([emailId, sourceRevision, chunkerVersion, ordinal], map: "email_chunks_source_ordinal_key")
+  @@index([userId, emailId, status], map: "email_chunks_user_email_status_idx")
+  @@map("email_chunks")
+  @@schema("app")
+}
+
+model AgentRun {
+  id                 String         @id @default(uuid()) @db.Uuid
+  userId             String         @map("user_id") @db.Uuid
+  googleConnectionId String?        @map("google_connection_id") @db.Uuid
+  requestReference   String         @map("request_reference") @db.VarChar(128)
+  intent             String         @db.VarChar(64)
+  status             AgentRunStatus @default(queued)
+  graphVersion       String         @map("graph_version") @db.VarChar(64)
+  checkpointThreadId String?        @map("checkpoint_thread_id") @db.VarChar(255)
+  provider           String?        @db.VarChar(64)
+  modelVersion       String?        @map("model_version") @db.VarChar(128)
+  latencyMs          Int?           @map("latency_ms")
+  estimatedCost      Decimal?       @map("estimated_cost") @db.Decimal(12, 6)
+  safeErrorCode      String?        @map("safe_error_code") @db.VarChar(128)
+  finishedAt         DateTime?      @map("finished_at") @db.Timestamptz(6)
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  googleConnection GoogleConnection? @relation(fields: [userId, googleConnectionId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+  pendingActions   PendingAction[]
+  tasks            Task[]
+
+  @@unique([userId, id], map: "agent_runs_user_id_id_key")
+  @@unique([userId, requestReference], map: "agent_runs_user_request_reference_key")
+  @@index([userId, status, createdAt(sort: Desc)], map: "agent_runs_user_status_created_idx")
+  @@map("agent_runs")
+  @@schema("app")
+}
+
+model PendingAction {
+  id               String              @id @default(uuid()) @db.Uuid
+  userId           String              @map("user_id") @db.Uuid
+  agentRunId       String              @map("agent_run_id") @db.Uuid
+  idempotencyKey   String              @map("idempotency_key") @db.VarChar(128)
+  actionType       String              @map("action_type") @db.VarChar(64)
+  canonicalPayload Json                @map("canonical_payload")
+  payloadHash      String              @map("payload_hash") @db.Char(64)
+  payloadVersion   Int                 @default(1) @map("payload_version")
+  status           PendingActionStatus @default(pending)
+  expiresAt        DateTime            @map("expires_at") @db.Timestamptz(6)
+  decidedAt        DateTime?           @map("decided_at") @db.Timestamptz(6)
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  agentRun AgentRun @relation(fields: [userId, agentRunId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([userId, idempotencyKey], map: "pending_actions_user_idempotency_key")
+  @@index([userId, status, expiresAt], map: "pending_actions_user_status_expires_idx")
+  @@index([userId, agentRunId], map: "pending_actions_user_run_idx")
+  @@map("pending_actions")
+  @@schema("app")
+}
+
+model Task {
+  id            String     @id @default(uuid()) @db.Uuid
+  userId        String     @map("user_id") @db.Uuid
+  agentRunId    String?    @map("agent_run_id") @db.Uuid
+  sourceEmailId String?    @map("source_email_id") @db.Uuid
+  title         String     @db.VarChar(500)
+  description   String?    @db.Text
+  dueAt         DateTime?  @map("due_at") @db.Timestamptz(6)
+  dueTimezone   String?    @map("due_timezone") @db.VarChar(128)
+  confidence    Float?     @db.DoublePrecision
+  status        TaskStatus @default(pending_review)
+  completedAt   DateTime?  @map("completed_at") @db.Timestamptz(6)
+  createdAt     DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  agentRun    AgentRun?  @relation(fields: [userId, agentRunId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+  sourceEmail Email?     @relation(fields: [userId, sourceEmailId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+  followUps   FollowUp[]
+
+  @@unique([userId, id], map: "tasks_user_id_id_key")
+  @@index([userId, status, dueAt], map: "tasks_user_status_due_at_idx")
+  @@index([userId, agentRunId], map: "tasks_user_run_idx")
+  @@index([userId, sourceEmailId], map: "tasks_user_source_email_idx")
+  @@map("tasks")
+  @@schema("app")
+}
+
+model FollowUp {
+  id          String         @id @default(uuid()) @db.Uuid
+  userId      String         @map("user_id") @db.Uuid
+  emailId     String         @map("email_id") @db.Uuid
+  taskId      String?        @map("task_id") @db.Uuid
+  scheduledAt DateTime       @map("scheduled_at") @db.Timestamptz(6)
+  status      FollowUpStatus @default(planned)
+  completedAt DateTime?      @map("completed_at") @db.Timestamptz(6)
+  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  email Email @relation(fields: [userId, emailId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+  task  Task? @relation(fields: [userId, taskId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([emailId, scheduledAt], map: "follow_ups_email_schedule_key")
+  @@index([userId, status, scheduledAt], map: "follow_ups_user_status_schedule_idx")
+  @@map("follow_ups")
+  @@schema("app")
+}
+
+model AuditLog {
+  id         String         @id @default(uuid()) @db.Uuid
+  userId     String?        @map("user_id") @db.Uuid
+  actorType  AuditActorType @map("actor_type")
+  eventType  String         @map("event_type") @db.VarChar(128)
+  entityType String?        @map("entity_type") @db.VarChar(64)
+  entityId   String?        @map("entity_id") @db.VarChar(128)
+  requestId  String?        @map("request_id") @db.VarChar(128)
+  metadata   Json?
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)], map: "audit_logs_user_created_idx")
+  @@index([entityType, entityId, createdAt(sort: Desc)], map: "audit_logs_entity_created_idx")
+  @@index([requestId], map: "audit_logs_request_id_idx")
+  @@map("audit_logs")
+  @@schema("app")
+}
