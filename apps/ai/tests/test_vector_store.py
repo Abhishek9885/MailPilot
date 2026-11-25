@@ -199,6 +199,19 @@ async def test_migrations_are_reproducible_and_immutable(tmp_path: Path) -> None
     assert first
     assert all(len(migration.checksum) == 64 for migration in first)
 
+    async with await psycopg.AsyncConnection.connect(
+        psycopg_connection_url(database_url), connect_timeout=5
+    ) as connection:
+        cursor = await connection.execute(
+            """
+            SELECT ns.nspname
+            FROM pg_extension AS ext
+            JOIN pg_namespace AS ns ON ns.oid = ext.extnamespace
+            WHERE ext.extname = 'vector'
+            """
+        )
+        assert await cursor.fetchone() == ("public",)
+
     copied_migrations = tmp_path / "migrations"
     copied_migrations.mkdir()
     for migration_file in MIGRATIONS_DIRECTORY.glob("*.sql"):
