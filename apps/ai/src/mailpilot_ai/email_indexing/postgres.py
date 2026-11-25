@@ -29,9 +29,16 @@ class PostgresEmailChunkRepository:
         chunks: Sequence[EmailChunk],
     ) -> tuple[VectorStoreChunkRef, ...]:
         if source.user_id != user_id or any(chunk.user_id != user_id for chunk in chunks):
-            raise VectorStoreError("EMAIL_INDEX_OWNER_MISMATCH", "Email chunks must belong to the requested user")
-        if any(chunk.email_id != source.email_id or chunk.source_revision != source.source_revision for chunk in chunks):
-            raise VectorStoreError("EMAIL_INDEX_SOURCE_MISMATCH", "Email chunks do not match their source revision")
+            raise VectorStoreError(
+                "EMAIL_INDEX_OWNER_MISMATCH", "Email chunks must belong to the requested user"
+            )
+        if any(
+            chunk.email_id != source.email_id or chunk.source_revision != source.source_revision
+            for chunk in chunks
+        ):
+            raise VectorStoreError(
+                "EMAIL_INDEX_SOURCE_MISMATCH", "Email chunks do not match their source revision"
+            )
 
         references: list[VectorStoreChunkRef] = []
         try:
@@ -190,7 +197,8 @@ class PostgresEmailIndexJobStore:
                         lease_expires_at, safe_error_code
                     ) VALUES (%s, %s, %s, %s, %s, 'processing', 1, CURRENT_TIMESTAMP,
                               CURRENT_TIMESTAMP + %s, NULL)
-                    ON CONFLICT (user_id, email_id, source_revision, chunker_version, configured_model)
+                    ON CONFLICT (user_id, email_id, source_revision, chunker_version,
+                                 configured_model)
                     DO UPDATE SET
                         status = 'processing',
                         attempt_count = ai.email_index_jobs.attempt_count + 1,
@@ -203,8 +211,15 @@ class PostgresEmailIndexJobStore:
                            AND ai.email_index_jobs.lease_expires_at < CURRENT_TIMESTAMP)
                     RETURNING status
                     """,
-                    (user_id, email_id, source_revision, chunker_version, configured_model,
-                     _JOB_LEASE, _JOB_LEASE),
+                    (
+                        user_id,
+                        email_id,
+                        source_revision,
+                        chunker_version,
+                        configured_model,
+                        _JOB_LEASE,
+                        _JOB_LEASE,
+                    ),
                 )
                 row = await cursor.fetchone()
                 if row is not None:
@@ -218,7 +233,11 @@ class PostgresEmailIndexJobStore:
                     (user_id, email_id, source_revision, chunker_version, configured_model),
                 )
                 current = await cursor.fetchone()
-                return "completed" if current is not None and current[0] == "completed" else "in_progress"
+                return (
+                    "completed"
+                    if current is not None and current[0] == "completed"
+                    else "in_progress"
+                )
         except psycopg.Error:
             raise VectorStoreError(
                 "EMAIL_INDEX_STATUS_UNAVAILABLE", "Email indexing status could not be updated"
@@ -277,13 +296,21 @@ class PostgresEmailIndexJobStore:
                         safe_error_code, started_at, completed_at, lease_expires_at
                     ) VALUES (%s, %s, %s, %s, %s, 'failed', 1, %s, %s,
                               CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL)
-                    ON CONFLICT (user_id, email_id, source_revision, chunker_version, configured_model)
+                    ON CONFLICT (user_id, email_id, source_revision, chunker_version,
+                                 configured_model)
                     DO UPDATE SET status = 'failed', chunk_count = EXCLUDED.chunk_count,
                         safe_error_code = EXCLUDED.safe_error_code,
                         completed_at = CURRENT_TIMESTAMP, lease_expires_at = NULL
                     """,
-                    (user_id, email_id, source_revision, chunker_version, configured_model,
-                     chunk_count, safe_error_code),
+                    (
+                        user_id,
+                        email_id,
+                        source_revision,
+                        chunker_version,
+                        configured_model,
+                        chunk_count,
+                        safe_error_code,
+                    ),
                 )
         except psycopg.Error:
             raise VectorStoreError(
@@ -346,8 +373,18 @@ class PostgresEmailIndexJobStore:
                     WHERE user_id = %s AND email_id = %s AND source_revision = %s
                       AND chunker_version = %s AND configured_model = %s
                     """,
-                    (status, model_version, chunk_count, embedded_chunk_count, safe_error_code,
-                     user_id, email_id, source_revision, chunker_version, configured_model),
+                    (
+                        status,
+                        model_version,
+                        chunk_count,
+                        embedded_chunk_count,
+                        safe_error_code,
+                        user_id,
+                        email_id,
+                        source_revision,
+                        chunker_version,
+                        configured_model,
+                    ),
                 )
                 if cursor.rowcount != 1:
                     raise VectorStoreError(

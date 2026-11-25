@@ -76,6 +76,7 @@ def signed_headers(payload: dict[str, object]) -> tuple[str, dict[str, str]]:
         SERVICE_TOKEN.encode("utf-8"), signed_content.encode("utf-8"), hashlib.sha256
     ).hexdigest()
     return body, {
+        "Content-Type": "application/json",
         "X-Request-ID": request_id,
         "X-Service-Timestamp": timestamp,
         "X-Service-Signature": signature,
@@ -88,7 +89,7 @@ async def test_internal_analysis_endpoint_requires_signed_service_request(
 ) -> None:
     provider = MockLLMProvider()
     monkeypatch.setattr(
-        "mailpilot_ai.analysis.router.get_settings",
+        "mailpilot_ai.internal_service.get_settings",
         lambda: SimpleNamespace(ai_internal_api_token=SecretStr(SERVICE_TOKEN)),
     )
     app.dependency_overrides[get_llm_provider] = lambda: provider
@@ -108,7 +109,7 @@ async def test_internal_analysis_endpoint_rejects_body_changed_after_signing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "mailpilot_ai.analysis.router.get_settings",
+        "mailpilot_ai.internal_service.get_settings",
         lambda: SimpleNamespace(ai_internal_api_token=SecretStr(SERVICE_TOKEN)),
     )
     payload = email_payload()
@@ -131,7 +132,7 @@ async def test_internal_analysis_endpoint_returns_validated_analysis_and_metadat
 ) -> None:
     provider = MockLLMProvider()
     monkeypatch.setattr(
-        "mailpilot_ai.analysis.router.get_settings",
+        "mailpilot_ai.internal_service.get_settings",
         lambda: SimpleNamespace(ai_internal_api_token=SecretStr(SERVICE_TOKEN)),
     )
     app.dependency_overrides[get_llm_provider] = lambda: provider
@@ -146,8 +147,8 @@ async def test_internal_analysis_endpoint_returns_validated_analysis_and_metadat
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 200
-    assert response.json()["schemaVersion"] == "email-analysis-v1"
+    assert response.status_code == 200, response.text
+    assert response.json()["schemaVersion"] == "email-analysis-v2"
     assert response.json()["modelVersion"] == "gpt-6.1-sol-test"
     assert response.json()["analysis"]["categories"] == ["work"]
     assert response.json()["usage"]["cost"]["estimatedCostUsd"] == "0.0002250000"

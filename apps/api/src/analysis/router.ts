@@ -41,7 +41,8 @@ export function createEmailAnalysisRouter(options: EmailAnalysisRouterOptions): 
       const analysis = await options.service.analyze(
         authContext.userId,
         emailId,
-        { reanalyze: requestOptions.data.reanalyze ?? false }
+        { reanalyze: requestOptions.data.reanalyze ?? false },
+        typeof response.locals.requestId === "string" ? response.locals.requestId : undefined
       );
       response.status(200).json({ analysis });
     } catch (error: unknown) {

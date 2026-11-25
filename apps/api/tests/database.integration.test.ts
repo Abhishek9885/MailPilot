@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { EmailAnalysisSchemaVersion, type EmailAnalysisServiceResponse } from "@mailpilot/shared";
+import { PrismaEmailAnalysisStore } from "../src/analysis/email-analysis-store.js";
 import { createDatabaseClient } from "../src/database.js";
 import { assertSafeIntegrationTestTarget } from "../src/database-safety.js";
 import type { PrismaClient } from "../src/generated/prisma/client.js";
@@ -45,7 +47,7 @@ describe.skipIf(testDatabaseUrl === null)("PostgreSQL integration", () => {
   beforeAll(async () => {
     if (!testDatabaseUrl) throw new Error("DATABASE_TEST_URL is required for database integration tests.");
     const repositoryRoot = findRepositoryRoot(process.cwd());
-    runPrismaCommand(repositoryRoot, testDatabaseUrl, ["migrate", "reset", "--force"]);
+    // Apply missing migrations without dropping the isolated test database.
     runPrismaCommand(repositoryRoot, testDatabaseUrl, ["migrate", "deploy"]);
     database = createDatabaseClient(testDatabaseUrl);
     await database.$connect();
@@ -152,7 +154,11 @@ describe.skipIf(testDatabaseUrl === null)("PostgreSQL integration", () => {
       await database.analysis.create({ data: analysisData });
       await expect(database.analysis.create({ data: analysisData })).rejects.toMatchObject({ code: "P2002" });
       await expect(database.analysis.create({
-        data: { ...analysisData, userId: secondaryUser.id }
+        data: {
+          ...analysisData,
+          userId: secondaryUser.id,
+          schemaVersion: "analysis-v1-cross-user"
+        }
       })).rejects.toMatchObject({ code: "P2003" });
 
       await database.emailChunk.create({
@@ -193,7 +199,7 @@ describe.skipIf(testDatabaseUrl === null)("PostgreSQL integration", () => {
           content: "invalid",
           contentHash: "c".repeat(64)
         }
-      })).rejects.toMatchObject({ code: "P2004" });
+      })).rejects.toMatchObject({ code: "P2039" });
 
       const agentRun = await database.agentRun.create({
         data: {
@@ -221,7 +227,7 @@ describe.skipIf(testDatabaseUrl === null)("PostgreSQL integration", () => {
         }
       })).rejects.toMatchObject({ code: "P2003" });
 
-      await database.pendingAction.create({
+      const pendingAction = await database.pendingAction.create({
         data: {
           userId: primaryUser.id,
           agentRunId: agentRun.id,
@@ -232,6 +238,80 @@ describe.skipIf(testDatabaseUrl === null)("PostgreSQL integration", () => {
           expiresAt
         }
       });
+      await expect(database.pendingAction.update({
+        where: { id: pendingAction.id },
+        data: {
+          canonicalPayload: { to: ["changed@example.invalid"], subject: "Changed", body: "Changed" }
+        }
+      })).rejects.toMatchObject({ code: "P2039" });
+
+      const decidedAt = new Date();
+      await database.pendingAction.update({
+        where: { id: pendingAction.id },
+        data: { status: "approved", decidedAt }
+      });
+      await database.pendingAction.update({
+        where: { id: pendingAction.id },
+        data: {
+          status: "executing",
+          executionKey: "f".repeat(64),
+          executionStartedAt: new Date(),
+          executionLeaseExpiresAt: new Date(Date.now() + 30_000),
+          executionAttempts: 1
+        }
+      });
+      await expect(database.pendingAction.update({
+        where: { id: pendingAction.id },
+        data: { executionKey: "a".repeat(64) }
+      })).rejects.toMatchObject({ code: "P2039" });
+      await database.pendingAction.update({
+        where: { id: pendingAction.id },
+        data: {
+          status: "reconciliation_required",
+          executionLeaseExpiresAt: null,
+          executionResultCode: "EXECUTION_OUTCOME_UNKNOWN"
+        }
+      });
+      const reconciliationClaimId = randomUUID();
+      await database.pendingAction.update({
+        where: { id: pendingAction.id },
+        data: {
+          reconciliationClaimId,
+          reconciliationLeaseExpiresAt: new Date(Date.now() + 30_000),
+          reconciliationAttempts: 1
+        }
+      });
+      await expect(database.pendingAction.update({
+        where: { id: pendingAction.id },
+        data: { status: "approved", executionResultCode: "EXECUTION_OUTCOME_UNKNOWN" }
+      })).rejects.toMatchObject({ code: "P2039" });
+      await database.pendingAction.update({
+        where: { id: pendingAction.id },
+        data: {
+          status: "approved",
+          executionResultCode: "EXECUTION_NOT_PERFORMED_CONFIRMED",
+          reconciliationClaimId: null,
+          reconciliationLeaseExpiresAt: null
+        }
+      });
+      await database.pendingAction.update({
+        where: { id: pendingAction.id },
+        data: {
+          status: "executing",
+          executionStartedAt: new Date(),
+          executionLeaseExpiresAt: new Date(Date.now() + 30_000),
+          executionAttempts: 2,
+          executionResultCode: null
+        }
+      });
+      await database.pendingAction.update({
+        where: { id: pendingAction.id },
+        data: { status: "succeeded", executionLeaseExpiresAt: null, executionResultCode: "EXECUTION_SUCCEEDED" }
+      });
+      await expect(database.pendingAction.update({
+        where: { id: pendingAction.id },
+        data: { status: "failed" }
+      })).rejects.toMatchObject({ code: "P2039" });
       await expect(database.pendingAction.create({
         data: {
           userId: secondaryUser.id,
@@ -249,29 +329,142 @@ describe.skipIf(testDatabaseUrl === null)("PostgreSQL integration", () => {
           userId: primaryUser.id,
           agentRunId: agentRun.id,
           sourceEmailId: email.id,
+          sourceConnectionId: primaryConnection.id,
+          sourceThreadId: email.providerThreadId,
+          sourceRevision: email.sourceRevision,
+          sourceEvidence: "Please send the report by Monday.",
+          deduplicationKey: "1".repeat(64),
+          assignee: "user",
+          dueAt: new Date("2026-11-02T00:00:00.000Z"),
+          dueTimezone: "America/Los_Angeles",
           title: "Integration task",
           confidence: 0.5
         }
       });
       await expect(database.task.create({
-        data: { userId: primaryUser.id, title: "Invalid confidence", confidence: 1.5 }
-      })).rejects.toMatchObject({ code: "P2004" });
+        data: {
+          userId: primaryUser.id,
+          sourceEmailId: email.id,
+          sourceConnectionId: primaryConnection.id,
+          sourceThreadId: email.providerThreadId,
+          deduplicationKey: "1".repeat(64),
+          title: "Duplicate integration task"
+        }
+      })).rejects.toMatchObject({ code: "P2002" });
       await expect(database.task.create({
-        data: { userId: secondaryUser.id, sourceEmailId: email.id, title: "Cross-owner task" }
+        data: { userId: primaryUser.id, title: "Invalid confidence", confidence: 1.5 }
+      })).rejects.toMatchObject({ code: "P2039" });
+      await expect(database.task.create({
+        data: {
+          userId: secondaryUser.id,
+          sourceEmailId: email.id,
+          sourceConnectionId: primaryConnection.id,
+          sourceThreadId: email.providerThreadId,
+          title: "Cross-owner task"
+        }
       })).rejects.toMatchObject({ code: "P2003" });
+      await expect(database.task.create({
+        data: {
+          userId: primaryUser.id,
+          sourceEmailId: email.id,
+          sourceConnectionId: primaryConnection.id,
+          sourceThreadId: "different-thread",
+          title: "Mismatched source thread"
+        }
+      })).rejects.toMatchObject({ code: "P2039" });
+
+      const commitment = await database.commitment.create({
+        data: {
+          userId: primaryUser.id,
+          sourceEmailId: email.id,
+          sourceConnectionId: primaryConnection.id,
+          sourceThreadId: email.providerThreadId,
+          sourceRevision: email.sourceRevision,
+          sourceEvidence: "I will send the report by Monday.",
+          deduplicationKey: "2".repeat(64),
+          speaker: "sender",
+          statement: "The sender will send the report.",
+          dueAt: new Date("2026-11-02T00:00:00.000Z"),
+          dueTimezone: "America/Los_Angeles",
+          confidence: 0.8
+        }
+      });
+      expect(commitment.status).toBe("pending_review");
+      await expect(database.commitment.create({
+        data: {
+          userId: primaryUser.id,
+          sourceEmailId: email.id,
+          sourceConnectionId: primaryConnection.id,
+          sourceThreadId: email.providerThreadId,
+          sourceEvidence: "Repeated promise",
+          deduplicationKey: "2".repeat(64),
+          speaker: "sender",
+          statement: "The sender will send the report."
+        }
+      })).rejects.toMatchObject({ code: "P2002" });
+      await expect(database.commitment.create({
+        data: {
+          userId: secondaryUser.id,
+          sourceEmailId: email.id,
+          sourceConnectionId: primaryConnection.id,
+          sourceThreadId: email.providerThreadId,
+          sourceEvidence: "Cross-owner promise",
+          deduplicationKey: "3".repeat(64),
+          speaker: "sender",
+          statement: "Cross-owner promise"
+        }
+      })).rejects.toMatchObject({ code: "P2003" });
+      await expect(database.commitment.create({
+        data: {
+          userId: primaryUser.id,
+          sourceEmailId: email.id,
+          sourceConnectionId: primaryConnection.id,
+          sourceThreadId: "different-thread",
+          sourceEvidence: "Mismatched source",
+          deduplicationKey: "4".repeat(64),
+          speaker: "sender",
+          statement: "Mismatched source"
+        }
+      })).rejects.toMatchObject({ code: "P2039" });
+      await expect(database.commitment.create({
+        data: {
+          userId: primaryUser.id,
+          sourceEmailId: email.id,
+          sourceConnectionId: primaryConnection.id,
+          sourceThreadId: email.providerThreadId,
+          sourceEvidence: "Invalid confidence",
+          deduplicationKey: "5".repeat(64),
+          speaker: "sender",
+          statement: "Invalid confidence",
+          confidence: 1.1
+        }
+      })).rejects.toMatchObject({ code: "P2039" });
 
       await database.followUp.create({
-        data: { userId: primaryUser.id, emailId: email.id, taskId: task.id, scheduledAt: expiresAt }
+        data: {
+          userId: primaryUser.id, emailId: email.id, taskId: task.id, scheduledAt: expiresAt,
+          sourceThreadId: email.providerThreadId, kind: "stale_thread", deduplicationKey: "test-followup-1",
+          title: "Follow up", reason: "No newer message in this conversation."
+        }
       });
       await expect(database.followUp.create({
-        data: { userId: primaryUser.id, emailId: email.id, scheduledAt: expiresAt }
+        data: {
+          userId: primaryUser.id, emailId: email.id, scheduledAt: expiresAt,
+          sourceThreadId: email.providerThreadId, kind: "stale_thread", deduplicationKey: "test-followup-1",
+          title: "Follow up", reason: "No newer message in this conversation."
+        }
       })).rejects.toMatchObject({ code: "P2002" });
       await expect(database.followUp.create({
         data: {
           userId: secondaryUser.id,
           emailId: email.id,
           taskId: task.id,
-          scheduledAt: new Date(expiresAt.getTime() + 1_000)
+          scheduledAt: new Date(expiresAt.getTime() + 1_000),
+          sourceThreadId: email.providerThreadId,
+          kind: "stale_thread",
+          deduplicationKey: "test-followup-2",
+          title: "Follow up",
+          reason: "No newer message in this conversation."
         }
       })).rejects.toMatchObject({ code: "P2003" });
 
@@ -293,6 +486,216 @@ describe.skipIf(testDatabaseUrl === null)("PostgreSQL integration", () => {
       if (primaryUserId) await database.user.deleteMany({ where: { id: primaryUserId } });
       if (secondaryUserId) await database.user.deleteMany({ where: { id: secondaryUserId } });
       if (auditLogId) await database.auditLog.deleteMany({ where: { id: auditLogId } });
+    }
+  });
+
+  it("deduplicates extracted records, refreshes new-message evidence, and supersedes removed items", async () => {
+    if (!database) throw new Error("Integration database was not initialized.");
+
+    const uniquePart = randomUUID().replaceAll("-", "");
+    let userId: string | undefined;
+    let otherUserId: string | undefined;
+    try {
+      const user = await database.user.create({
+        data: { emailNormalized: `tasks-${uniquePart}@mailpilot.invalid` }
+      });
+      userId = user.id;
+      const otherUser = await database.user.create({
+        data: { emailNormalized: `tasks-other-${uniquePart}@mailpilot.invalid` }
+      });
+      otherUserId = otherUser.id;
+      const connection = await database.googleConnection.create({
+        data: {
+          userId,
+          providerSubject: `tasks-google-${uniquePart}`,
+          providerEmailNormalized: `tasks-${uniquePart}@mailpilot.invalid`
+        }
+      });
+      const threadId = `tasks-thread-${uniquePart}`;
+      const firstEmail = await database.email.create({
+        data: {
+          userId,
+          googleConnectionId: connection.id,
+          providerMessageId: `tasks-message-1-${uniquePart}`,
+          providerThreadId: threadId,
+          subject: "Project brief",
+          bodyText: "I will send and review the project brief.",
+          bodyHash: "a".repeat(64),
+          receivedAt: new Date("2026-11-19T12:00:00.000Z")
+        }
+      });
+      const secondEmail = await database.email.create({
+        data: {
+          userId,
+          googleConnectionId: connection.id,
+          providerMessageId: `tasks-message-2-${uniquePart}`,
+          providerThreadId: threadId,
+          subject: "Updated project brief timing",
+          bodyText: "I will send and review the project brief next week.",
+          bodyHash: "b".repeat(64),
+          receivedAt: new Date("2026-11-20T12:00:00.000Z")
+        }
+      });
+      const store = new PrismaEmailAnalysisStore(database);
+      const makeResult = (
+        emailId: string,
+        sourceRevision: number,
+        dueDate: string,
+        evidence: string,
+        includeCandidates = true,
+        sourceUserId = user.id
+      ): EmailAnalysisServiceResponse => ({
+        userId: sourceUserId,
+        emailId,
+        sourceRevision,
+        schemaVersion: EmailAnalysisSchemaVersion,
+        provider: "test-provider",
+        modelVersion: "test-model-v1",
+        responseId: null,
+        providerRequestId: null,
+        usage: null,
+        analysis: {
+          categories: ["work"],
+          priority: "normal",
+          summary: "Project brief follow-through.",
+          actionItems: includeCandidates ? [{
+            task: "Send the project brief",
+            owner: "user",
+            dueDate,
+            dueDateBasis: "explicit",
+            evidence
+          }] : [],
+          deadlines: [],
+          commitments: includeCandidates ? [{
+            speaker: "sender",
+            commitment: "The sender will review the project brief.",
+            dueDate,
+            evidence
+          }] : [],
+          eventCandidates: []
+        }
+      });
+
+      await store.saveAnalysis(makeResult(
+        firstEmail.id,
+        firstEmail.sourceRevision,
+        "2026-11-23",
+        "I will send the project brief by Monday."
+      ));
+      const task = await database.task.findFirstOrThrow({
+        where: { userId, sourceEmailId: firstEmail.id, title: "Send the project brief" }
+      });
+      const commitment = await database.commitment.findFirstOrThrow({
+        where: { userId, sourceEmailId: firstEmail.id }
+      });
+      await database.task.update({
+        where: { id: task.id },
+        data: {
+          status: "active",
+          reviewedAt: new Date("2026-11-19T13:00:00.000Z"),
+          title: "User-corrected task title",
+          titleEditedAt: new Date("2026-11-19T13:10:00.000Z"),
+          dueAt: new Date("2026-11-29T00:00:00.000Z"),
+          dueDateSource: "user"
+        }
+      });
+      await database.commitment.update({
+        where: { id: commitment.id },
+        data: { status: "active", reviewedAt: new Date("2026-11-19T13:00:00.000Z") }
+      });
+
+      await store.saveAnalysis(makeResult(
+        secondEmail.id,
+        secondEmail.sourceRevision,
+        "2026-11-30",
+        "I can send and review the project brief by Monday next week."
+      ));
+      const refreshedTask = await database.task.findUniqueOrThrow({ where: { id: task.id } });
+      const refreshedCommitment = await database.commitment.findUniqueOrThrow({
+        where: { id: commitment.id }
+      });
+      expect(refreshedTask).toMatchObject({
+        status: "active",
+        title: "User-corrected task title",
+        sourceEmailId: secondEmail.id,
+        sourceThreadId: threadId,
+        dueAt: new Date("2026-11-29T00:00:00.000Z"),
+        dueDateSource: "user",
+        dueTimezone: null,
+        confidence: null,
+        sourceRevision: secondEmail.sourceRevision,
+        sourceEvidence: "I can send and review the project brief by Monday next week."
+      });
+      expect(refreshedCommitment).toMatchObject({
+        status: "active",
+        sourceEmailId: secondEmail.id,
+        sourceThreadId: threadId,
+        dueAt: new Date("2026-11-30T00:00:00.000Z"),
+        sourceEvidence: "I can send and review the project brief by Monday next week."
+      });
+      expect(await database.task.count({ where: { userId, sourceThreadId: threadId } })).toBe(1);
+      expect(await database.commitment.count({ where: { userId, sourceThreadId: threadId } })).toBe(1);
+
+      const otherConnection = await database.googleConnection.create({
+        data: {
+          userId: otherUser.id,
+          providerSubject: `tasks-other-google-${uniquePart}`,
+          providerEmailNormalized: `tasks-other-${uniquePart}@mailpilot.invalid`
+        }
+      });
+      const sameProviderThreadIdEmail = await database.email.create({
+        data: {
+          userId: otherUser.id,
+          googleConnectionId: otherConnection.id,
+          providerMessageId: `tasks-other-message-${uniquePart}`,
+          providerThreadId: threadId,
+          subject: "Separate account thread",
+          bodyText: "I will send the project brief by Monday.",
+          bodyHash: "c".repeat(64),
+          receivedAt: new Date("2026-11-20T13:00:00.000Z")
+        }
+      });
+      await store.saveAnalysis(makeResult(
+        sameProviderThreadIdEmail.id,
+        sameProviderThreadIdEmail.sourceRevision,
+        "2026-12-01",
+        "I will send and review the project brief by Tuesday.",
+        true,
+        otherUser.id
+      ));
+      expect(await database.task.count({ where: { userId, sourceThreadId: threadId } })).toBe(1);
+      expect(await database.commitment.count({ where: { userId, sourceThreadId: threadId } })).toBe(1);
+      expect(await database.task.count({ where: { userId: otherUser.id, sourceThreadId: threadId } })).toBe(1);
+      expect(await database.commitment.count({ where: { userId: otherUser.id, sourceThreadId: threadId } })).toBe(1);
+
+      const revisedEmail = await database.email.update({
+        where: { id: secondEmail.id },
+        data: { sourceRevision: secondEmail.sourceRevision + 1 }
+      });
+      await store.saveAnalysis(makeResult(
+        revisedEmail.id,
+        revisedEmail.sourceRevision,
+        "2026-11-30",
+        "",
+        false
+      ));
+      const supersededTask = await database.task.findUniqueOrThrow({ where: { id: task.id } });
+      const supersededCommitment = await database.commitment.findUniqueOrThrow({
+        where: { id: commitment.id }
+      });
+      expect(supersededTask.status).toBe("superseded");
+      expect(supersededTask.supersededAt).toBeInstanceOf(Date);
+      expect(supersededCommitment.status).toBe("superseded");
+      expect(supersededCommitment.supersededAt).toBeInstanceOf(Date);
+      expect(await database.task.count({
+        where: { userId: otherUser.id, sourceConnectionId: otherConnection.id, status: "pending_review" }
+      })).toBe(1);
+      expect(await database.commitment.count({
+        where: { userId: otherUser.id, sourceConnectionId: otherConnection.id, status: "pending_review" }
+      })).toBe(1);
+    } finally {
+      if (otherUserId) await database.user.deleteMany({ where: { id: otherUserId } });
+      if (userId) await database.user.deleteMany({ where: { id: userId } });
     }
   });
 });

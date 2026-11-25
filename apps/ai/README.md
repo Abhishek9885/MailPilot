@@ -22,7 +22,7 @@ Root scripts provide the same workflow: `npm run dev:ai`, `npm run test:py`, `np
 
 ## Configuration and routes
 
-Pydantic Settings validates environment variables at startup. Invalid configuration errors identify variable names only. The service uses `AI_PORT` (default `8000`), `AI_LOG_LEVEL` (default `info`), optional `AI_SERVICE_NAME` (default `ai`), and `DATABASE_URL` for readiness checks.
+Pydantic Settings validates environment variables at startup. Invalid configuration errors identify variable names only. The service uses `AI_HOST` (default `127.0.0.1`), `AI_PORT` (default `8000`), `AI_LOG_LEVEL` (default `info`), optional `AI_SERVICE_NAME` (default `ai`), and `AI_DATABASE_URL` for readiness checks. `DATABASE_URL` remains a local/test compatibility fallback; production startup fails unless a separately permissioned `AI_DATABASE_URL` is configured, never the API database credential.
 
 - `GET /internal/v1/health/live` reports process liveness without checking external dependencies.
 - `GET /internal/v1/health/ready` runs a bounded `SELECT 1` check and returns `503` if PostgreSQL is unavailable.
@@ -71,8 +71,18 @@ The analysis returns categories, priority, a concise summary, action items, dead
 
 Express stores successful output in the Prisma-owned `app.analyses` table with source revision, analysis schema version, actual provider model version, provider IDs, usage, and result. Repeated requests reuse a completed analysis for the same source revision and schema version. The schema and retention policy are documented in [the API contracts](../../docs/api-contracts.md).
 
+## Traditional email classification
+
+The versioned TF-IDF/Logistic Regression artifact is served by the signed internal endpoint `POST /internal/v1/email-classification/`. The request accepts bounded `subject` and `bodyText`; the response includes the model and response-schema versions, category, priority, request ID, and an explicit abstention flag for wholly unseen vocabulary. Express must call it using the existing HMAC signature contract. Readiness returns only a generic unavailable status if the configured model artifact cannot be loaded. Set `AI_CLASSIFIER_ARTIFACT_DIR` to override the checked-in local artifact directory.
+
+The route is a typed model-serving baseline and is not wired into the current user-facing analysis path. Compare it to the LLM using `npm run compare:email-classifier` (three repeats by default). This evaluates both approaches on the same held-out synthetic test messages, reports first-pass and mean quality, latency, and exact-output stability across repeats. It makes bounded provider calls and can incur API charges. A dollar cost is reported only when all calls include usage and dated token rates are configured; otherwise it reports token usage and explicitly marks cost unavailable. Never use private mailbox data for this comparison without an appropriate lawful basis and consent.
+
 ## Suggestion-only reply drafting
 
 FastAPI accepts signed internal requests at `POST /internal/v1/reply-drafts/`. Express supplies the selected message and at most seven recent messages from the same owner-scoped thread. Each message includes an application message ID, source revision, sender metadata, timestamp, subject, and bounded plain-text body. Email text is untrusted data; a separate optional user instruction may set writing style but cannot authorize commitments or actions.
 
 The Pydantic schema limits the reply, factual claims, evidence quotes, and uncertainty labels. FastAPI rejects claims whose quote is absent from the referenced source message or whose claim text is absent from the reply. It returns an explicit no-draft result when context is insufficient. Express independently validates identity, source revisions, references, and evidence, then stores successful suggestions in Prisma's `app.reply_drafts`. The public API can edit suggestion text while preserving suggestion status. The feature has no Gmail send or Gmail draft-write capability.
+
+## Offline evaluation suite
+
+Run `npm run eval:offline` from the repository root for the versioned snapshot scorer, synthetic vector-vs-hybrid retrieval replay, and local classifier held-out evaluation. This command makes no model-provider, Gmail, embedding, or database calls. Use `--compare-before` and `--compare-after` on captured snapshots to report quality, latency, token, and available configured-cost deltas. See [the evaluation suite guide](../../docs/ai-evaluation-suite.md) for snapshot format, metrics, and limitations.

@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "modelVersion": "email-tfidf-logreg-v1",
+  "datasetVersion": "email-classification-v1",
+  "randomSeed": 20261119,
+  "trainingRecordIds": [
+    "cls-work-train-01",
+    "cls-work-train-02",
+    "cls-personal-train-01",
+    "cls-personal-train-02",
+    "cls-finance-train-01",
+    "cls-finance-train-02",
+    "cls-travel-train-01",
+    "cls-travel-train-02",
+    "cls-shopping-train-01",
+    "cls-shopping-train-02",
+    "cls-social-train-01",
+    "cls-social-train-02",
+    "cls-newsletter-train-01",
+    "cls-newsletter-train-02",
+    "cls-security-train-01",
+    "cls-security-train-02",
+    "cls-other-train-01",
+    "cls-other-train-02"
+  ],
+  "trainingDataSha256": "e2e7307757715d2eacfd892cf47bfca82c2d5866bfecd01de62c1f165cdb749d",
+  "primaryCategoryCounts": {
+    "finance": 2,
+    "newsletter": 2,
+    "other": 2,
+    "personal": 2,
+    "security": 2,
+    "shopping": 2,
+    "social": 2,
+    "travel": 2,
+    "work": 2
+  },
+  "priorityCounts": {
+    "high": 2,
+    "low": 8,
+    "normal": 7,
+    "urgent": 1
+  },
+  "preprocessing": {
+    "unicode_normalization": "NFKC",
+    "whitespace_normalization": "collapse_and_strip",
+    "fields": [
+      "subject",
+      "bodyText"
+    ],
+    "field_separator": "newline"
+  },
+  "vectorizer": {
+    "lowercase": true,
+    "strip_accents": "unicode",
+    "ngram_range": [
+      1,
+      2
+    ],
+    "min_df": 1,
+    "sublinear_tf": true,
+    "max_features": 20000
+  },
+  "logisticRegression": {
+    "c": 1.0,
+    "max_iter": 2000,
+    "random_state": 20261119,
+    "solver": "lbfgs",
+    "category_class_weight": null,
+    "priority_class_weight": "balanced"
+  },
+  "runtime": {
+    "python": "3.12.10",
+    "numpy": "2.5.5",
+    "scipy": "1.18.1",
+    "scikit_learn": "1.9.1",
+    "joblib": "1.6.0"
+  },
+  "artifactFilename": "classifier.joblib",
+  "artifactSha256": "2f774c519d190d560ff5f27322bd28f2d83de7c20611e8e1eb96f670b8b9058c"
+}

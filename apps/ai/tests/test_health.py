@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from mailpilot_ai.classification.service import EmailClassifierUnavailableError
 from mailpilot_ai.main import app
 
 
@@ -58,6 +59,24 @@ async def test_readiness_returns_safe_503_when_database_is_down() -> None:
     assert response.status_code == 503
     assert response.json()["status"] == "unavailable"
     assert "private details" not in response.text
+
+
+@pytest.mark.anyio
+async def test_readiness_returns_safe_503_when_classifier_is_unavailable() -> None:
+    with (
+        patch("mailpilot_ai.main.check_database", new=AsyncMock(return_value=None)),
+        patch(
+            "mailpilot_ai.main.get_email_classifier",
+            side_effect=EmailClassifierUnavailableError(),
+        ),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/internal/v1/health/ready")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "unavailable"
+    assert "private model path" not in response.text
+    assert "classifier.joblib" not in response.text
 
 
 @pytest.mark.anyio

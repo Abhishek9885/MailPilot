@@ -6,12 +6,16 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi==0.143.0",
   "httpx==0.28.1",
+  "joblib==1.6.0",
   "langgraph==1.2.22",
   "langgraph-checkpoint-postgres==3.2.1",
+  "numpy==2.5.5",
   "psycopg[binary]==3.2.10",
   "psycopg-pool==3.3.3",
   "pydantic==2.12.5",
   "pydantic-settings==2.10.1",
+  "scikit-learn==1.9.1",
+  "scipy==1.18.1",
   "structlog==25.4.0",
   "tiktoken==0.14.0",
   "uvicorn[standard]==0.35.0",
@@ -50,10 +54,10 @@ no_implicit_reexport = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["psycopg.*"]
+module = ["joblib", "scipy.*", "sklearn.*", "psycopg.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "scripts"]
 addopts = "-ra -p no:cacheprovider"

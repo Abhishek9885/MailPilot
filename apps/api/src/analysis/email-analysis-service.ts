@@ -29,7 +29,8 @@ export class EmailAnalysisService {
   public async analyze(
     userId: string,
     untrustedEmailId: string,
-    options: { reanalyze?: boolean } = {}
+    options: { reanalyze?: boolean } = {},
+    requestId?: string
   ): Promise<StoredEmailAnalysis> {
     const emailId = EmailIdSchema.safeParse(untrustedEmailId);
     if (!emailId.success) {
@@ -60,7 +61,7 @@ export class EmailAnalysisService {
       senderEmail: email.senderEmailNormalized,
       receivedAt: email.receivedAt,
       bodyText: email.bodyText
-    });
+    }, requestId);
     if (
       result.userId !== userId
       || result.emailId !== email.id

@@ -36,7 +36,8 @@ export class ReplyDraftService {
   public async generate(
     userId: string,
     untrustedEmailId: string,
-    untrustedBody: unknown
+    untrustedBody: unknown,
+    requestId?: string
   ): Promise<ReplyDraftGenerationResult> {
     const emailId = EmailIdSchema.safeParse(untrustedEmailId);
     if (!emailId.success) throw emailNotFound();
@@ -59,7 +60,7 @@ export class ReplyDraftService {
       instruction: body.data.instruction ?? null,
       messages: contextualMessages
     };
-    const result = ReplyDraftServiceResponseSchema.safeParse(await this.drafter.draft(request));
+    const result = ReplyDraftServiceResponseSchema.safeParse(await this.drafter.draft(request, requestId));
     if (!result.success) throw invalidAiResponse();
     validateResponse(result.data, request);
 

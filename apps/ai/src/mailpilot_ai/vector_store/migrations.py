@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -105,9 +106,11 @@ async def apply_ai_migrations(
 
 async def _main() -> None:
     settings = get_settings()
-    migrations = await apply_ai_migrations(str(settings.database_url))
+    migrations = await apply_ai_migrations(str(settings.database_connection_url))
     print(f"AI schema is current ({len(migrations)} migrations)")
 
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     asyncio.run(_main())

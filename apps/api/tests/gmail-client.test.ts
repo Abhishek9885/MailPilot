@@ -353,6 +353,46 @@ describe("Gmail API client", () => {
     });
   });
 
+  it("rejects an oversized successful Gmail response before JSON parsing", async () => {
+    const oversizedBody = JSON.stringify({
+      id: "msg-1",
+      threadId: "thread-1",
+      payload: { mimeType: "text/plain", body: { data: "A".repeat(8 * 1024 * 1024) } }
+    });
+    const client = new GmailClient({
+      tokenProvider: createStaticTokenProvider(FAKE_ACCESS_TOKEN),
+      fetch: createMockFetch(() => new Response(oversizedBody, {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })),
+      sleep: dummySleep,
+      maxRetries: 0
+    });
+
+    await expect(client.getMessage("oversized-message")).rejects.toMatchObject({
+      code: "INVALID_GMAIL_RESPONSE",
+      statusCode: 502
+    });
+  });
+
+  it("bounds error response bodies before checking rate-limit markers", async () => {
+    const oversizedBody = JSON.stringify({ error: "x".repeat(70 * 1024), reason: "userRateLimitExceeded" });
+    const client = new GmailClient({
+      tokenProvider: createStaticTokenProvider(FAKE_ACCESS_TOKEN),
+      fetch: createMockFetch(() => new Response(oversizedBody, {
+        status: 403,
+        headers: { "Content-Type": "application/json" }
+      })),
+      sleep: dummySleep,
+      maxRetries: 0
+    });
+
+    await expect(client.listMessages()).rejects.toMatchObject({
+      code: "GMAIL_REQUEST_FAILED",
+      statusCode: 403
+    });
+  });
+
   it("keeps tokens and Gmail search queries out of retry logs", async () => {
     const warn = vi.fn();
     const logger = { info: vi.fn(), warn } as unknown as Logger;

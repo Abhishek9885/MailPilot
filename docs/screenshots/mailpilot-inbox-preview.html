@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MailPilot synthetic inbox preview</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:1440px;height:960px;background:#f4f7f7;color:#29414a;font-family:Inter,"Segoe UI",Arial,sans-serif}body{overflow:hidden}.app{display:grid;grid-template-columns:232px 1fr;height:960px}.side{background:#142d35;color:#d4e1e3;padding:26px 18px;display:flex;flex-direction:column}.brand{display:flex;align-items:center;gap:11px;color:#fff;font-size:21px;font-weight:750;letter-spacing:.2px;margin:2px 8px 38px}.logo{width:38px;height:38px;border-radius:12px;background:#ebf6f4;color:#147b72;display:grid;place-items:center;font-weight:800;font-size:22px}.label{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#8ba5aa;padding:0 12px;margin:0 0 12px}.nav{display:grid;gap:6px}.item{height:43px;padding:0 12px;display:flex;align-items:center;gap:13px;color:#bfd0d3;text-decoration:none;font-size:14px;border-radius:9px}.item.active{background:#1e4c51;color:#fff;font-weight:650}.ico{width:18px;text-align:center;font-size:17px;color:#9ec9c4}.profile{margin-top:auto;border-top:1px solid #315058;padding:18px 9px 3px;display:flex;gap:11px;align-items:center}.avatar{width:34px;height:34px;border-radius:50%;background:#e9cfba;color:#694d39;font-weight:700;font-size:12px;display:grid;place-items:center}.profile strong{display:block;font-size:13px;color:#fff}.profile small{display:block;color:#9cb2b6;font-size:11px;margin-top:3px}.main{min-width:0}.top{height:76px;background:#fff;border-bottom:1px solid #e2e9e9;display:flex;align-items:center;justify-content:space-between;padding:0 38px}.search{height:43px;width:560px;border:1px solid #e1e8e8;background:#f7f9f9;border-radius:11px;display:flex;align-items:center;padding:0 15px;color:#87989d;font-size:14px}.search b{font-size:18px;margin-right:12px;color:#607980}.search kbd{margin-left:auto;border:1px solid #dce5e5;background:#fff;border-radius:6px;padding:4px 7px;font-size:10px}.topright{display:flex;align-items:center;gap:20px;color:#637a80;font-size:14px}.user{display:flex;align-items:center;gap:10px}.page{padding:32px 38px}.crumb{color:#789096;font-size:12px;margin-bottom:8px}.title{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:24px}.title h1{font-size:28px;line-height:1.1;margin:0 0 7px;color:#203a43;letter-spacing:-.5px}.title p{margin:0;color:#71858b;font-size:14px}.pill{background:#e7f4f2;color:#147a72;font-size:12px;padding:8px 12px;border-radius:18px;font-weight:650}.card{background:#fff;border:1px solid #e0e8e8;border-radius:14px;box-shadow:0 5px 18px rgba(20,46,54,.035);overflow:hidden}.tools{padding:16px 19px;border-bottom:1px solid #e7eeee;display:flex;align-items:center;justify-content:space-between}.tabs{display:flex;gap:8px}.tab{padding:8px 13px;border-radius:8px;border:1px solid #e0e8e8;color:#687e84;font-size:12px}.tab.selected{background:#eaf5f3;border-color:#d2e8e4;color:#17796f;font-weight:650}.filter{color:#60777d;font-size:12px}.table{width:100%;border-collapse:collapse;table-layout:fixed}.table th{height:45px;text-align:left;padding:0 13px;background:#f9fbfb;color:#718288;text-transform:uppercase;letter-spacing:.7px;font-size:10px;font-weight:700;border-bottom:1px solid #e7eded}.table td{height:76px;border-bottom:1px solid #edf1f1;padding:8px 13px;vertical-align:middle;font-size:12px}.table tbody tr:last-child td{border-bottom:0}.star{width:35px;color:#97a5a8;font-size:18px}.who{display:flex;align-items:center;gap:10px}.circle{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-size:10px;font-weight:700;color:#586b8e;background:#ece8f7;flex:none}.c2{background:#fbefd8;color:#8d6c33}.c3{background:#e0f1eb;color:#477a68}.c4{background:#e6edf7;color:#526d91}.name{font-weight:650;color:#486169;font-size:12px}.email{font-size:10px;color:#92a0a4;margin-top:4px}.subject{font-weight:650;color:#476068;font-size:12px}.preview{font-size:10px;color:#87979c;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:455px}.badge{display:inline-block;padding:6px 10px;border:1px solid #e5ebeb;border-radius:15px;background:#f6f8f8;color:#60747a;font-size:10px;font-weight:650}.b1{background:#eef6f2;color:#52795d}.b2{background:#fff6e7;color:#966e26}.b3{background:#edf3f9;color:#58718e}.status{color:#718288}.foot{display:flex;justify-content:space-between;border-top:1px solid #e5ebeb;background:#fff;padding:13px 19px;color:#819297;font-size:10px}.sample{color:#187b70;font-weight:700}.sample:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:#2eaa95;margin:0 7px 1px 0}.note{margin-top:16px;color:#87979b;font-size:11px;display:flex;gap:8px;align-items:center}.note strong{color:#3f6568}.note i{width:8px;height:8px;border-radius:50%;background:#28a38f;display:inline-block}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><span class="logo">M</span>MailPilot <span style="color:#68d0be">AI</span></div>
+    <div class="label">Workspace</div>
+    <nav class="nav">
+      <div class="item"><span class="ico">o</span>Dashboard</div>
+      <div class="item active"><span class="ico">[]</span>Inbox <span style="margin-left:auto;font-size:11px;color:#a7c6c5">24</span></div>
+      <div class="item"><span class="ico">*</span>Agent</div>
+      <div class="item"><span class="ico">v</span>Approvals</div>
+      <div class="item"><span class="ico">=</span>Tasks</div>
+      <div class="item"><span class="ico">o</span>Activity</div>
+      <div class="item"><span class="ico">=</span>Drafts</div>
+      <div class="item"><span class="ico">_</span>Archive</div>
+      <div class="item"><span class="ico">#</span>Settings</div>
+    </nav>
+    <div class="profile"><span class="avatar">DM</span><span><strong>Demo workspace</strong><small>Synthetic preview account</small></span></div>
+  </aside>
+  <main class="main">
+    <header class="top"><div class="search"><b>Q</b>Search sender, subject, or keyword<kbd>Ctrl / Cmd K</kbd></div><div class="topright"><span>+</span><span>|</span><div class="user"><span class="avatar">DM</span>Demo workspace</div></div></header>
+    <section class="page">
+      <div class="crumb">Workspace&nbsp; / &nbsp;Mail</div>
+      <div class="title"><div><h1>Inbox</h1><p>Keep your conversations, follow-ups, and context in one place.</p></div><span class="pill">24 sample messages</span></div>
+      <div class="card">
+        <div class="tools"><div class="tabs"><span class="tab selected">All messages</span><span class="tab">Unread</span><span class="tab">Starred</span><span class="tab">Priority</span></div><span class="filter">Category&nbsp; v &nbsp;&nbsp; Status&nbsp; v</span></div>
+        <table class="table">
+          <colgroup><col style="width:5%"><col style="width:23%"><col style="width:36%"><col style="width:12%"><col style="width:10%"><col style="width:14%"></colgroup>
+          <thead><tr><th>*</th><th>Sender</th><th>Subject</th><th>Category</th><th>Priority</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td class="star">*</td><td><div class="who"><span class="circle">OC</span><div><div class="name">Olivia Chen</div><div class="email">olivia@mailpilot.invalid</div></div></div></td><td><div class="subject">Brand review notes for Friday</div><div class="preview">I added the updated direction and a few questions for the review.</div></td><td><span class="badge b3">Client</span></td><td><span class="badge b2">high</span></td><td class="status">Needs reply</td></tr>
+            <tr><td class="star">*</td><td><div class="who"><span class="circle c2">MA</span><div><div class="name">Mateo Alvarez</div><div class="email">mateo@mailpilot.invalid</div></div></div></td><td><div class="subject">Updated client timeline</div><div class="preview">The revised rollout gives us an extra week for user testing.</div></td><td><span class="badge b3">Project</span></td><td><span class="badge b2">high</span></td><td class="status">In progress</td></tr>
+            <tr><td class="star">*</td><td><div class="who"><span class="circle c3">PN</span><div><div class="name">Priya Nair</div><div class="email">priya@mailpilot.invalid</div></div></div></td><td><div class="subject">Re: Vendor agreement</div><div class="preview">Legal confirmed the updated language in section four. Could you review the final copy?</div></td><td><span class="badge">Legal</span></td><td><span class="badge b2">high</span></td><td class="status">Awaiting review</td></tr>
+            <tr><td class="star">*</td><td><div class="who"><span class="circle c4">JL</span><div><div class="name">Jordan Lee</div><div class="email">jordan@mailpilot.invalid</div></div></div></td><td><div class="subject">Q3 launch dates</div><div class="preview">Can we confirm Thursday, October 29 for the customer announcement?</div></td><td><span class="badge b3">Project</span></td><td><span class="badge b2">urgent</span></td><td class="status">Needs reply</td></tr>
+            <tr><td class="star">*</td><td><div class="who"><span class="circle c2">ER</span><div><div class="name">Elena Rossi</div><div class="email">elena@mailpilot.invalid</div></div></div></td><td><div class="subject">Revised campaign estimate</div><div class="preview">The new estimate includes the photography and two rounds of edits.</div></td><td><span class="badge b1">Finance</span></td><td><span class="badge b2">high</span></td><td class="status">Needs reply</td></tr>
+            <tr><td class="star">*</td><td><div class="who"><span class="circle c3">MR</span><div><div class="name">Marcus Reed</div><div class="email">marcus@mailpilot.invalid</div></div></div></td><td><div class="subject">Production handoff: incident follow-up</div><div class="preview">The customer is waiting on our revised mitigation plan before noon.</div></td><td><span class="badge b1">Operations</span></td><td><span class="badge b2">urgent</span></td><td class="status">Due today</td></tr>
+            <tr><td class="star">*</td><td><div class="who"><span class="circle c4">NP</span><div><div class="name">Naomi Patel</div><div class="email">naomi@mailpilot.invalid</div></div></div></td><td><div class="subject">New teammate onboarding checklist</div><div class="preview">Sharing the access checklist for Friday's start date.</div></td><td><span class="badge">People</span></td><td><span class="badge">normal</span></td><td class="status">For reference</td></tr>
+          </tbody>
+        </table>
+        <div class="foot"><span>Showing 1-7 of 24 messages</span><span class="sample">Sample data only</span></div>
+      </div>
+      <div class="note"><i></i><span><strong>Synthetic portfolio preview.</strong> Fictional messages and mailpilot.invalid addresses; this is not connected Gmail data.</span></div>
+    </section>
+  </main>
+</div>
+</body>
+</html>

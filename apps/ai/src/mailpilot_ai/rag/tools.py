@@ -5,9 +5,11 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
+from time import perf_counter
 from typing import Protocol, TypeVar
 from uuid import UUID
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from mailpilot_ai.rag.schemas import GroundedAnswerResponse
@@ -24,6 +26,7 @@ DEFAULT_RAG_ANSWER_TIMEOUT_SECONDS = 120.0
 DEFAULT_GMAIL_SEARCH_RETRIES = 1
 DEFAULT_RAG_ANSWER_RETRIES = 0
 _SAFE_ERROR_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+_logger = structlog.get_logger().bind(service="ai")
 
 
 class ReadOnlyToolName(StrEnum):
@@ -306,8 +309,21 @@ class ReadOnlyRAGToolRegistry:
         operation: Callable[[], Awaitable[_ToolResult]],
     ) -> _ToolResult:
         for attempt in range(1, max_retries + 2):
+            started_at = perf_counter()
             try:
-                return await asyncio.wait_for(operation(), timeout=timeout_seconds)
+                result = await asyncio.wait_for(operation(), timeout=timeout_seconds)
+                fields: dict[str, object] = {
+                    "toolName": tool_name.value,
+                    "attempt": attempt,
+                    "durationMs": round((perf_counter() - started_at) * 1_000, 2),
+                }
+                if isinstance(result, GmailSearchToolResult):
+                    fields["resultCount"] = len(result.sources)
+                elif isinstance(result, RAGAnswerToolResult):
+                    fields["abstained"] = result.answer.abstained
+                    fields["citationCount"] = len(result.answer.citations)
+                _logger.info("rag.tool.completed", **fields)
+                return result
             except ToolInvocationError as error:
                 failure_code = error.code
                 retryable = error.retryable
@@ -322,6 +338,15 @@ class ReadOnlyRAGToolRegistry:
                     else "TOOL_EXECUTION_FAILED"
                 )
                 retryable = getattr(error, "retryable", False) is True
+
+            _logger.warning(
+                "rag.tool.attempt_failed",
+                toolName=tool_name.value,
+                attempt=attempt,
+                durationMs=round((perf_counter() - started_at) * 1_000, 2),
+                errorCode=failure_code,
+                retryable=retryable,
+            )
 
             if retryable and attempt <= max_retries:
                 await asyncio.sleep(min(0.05 * (2 ** (attempt - 1)), 0.2))

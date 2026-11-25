@@ -11,6 +11,7 @@ describe("email query service", () => {
     const rows = [{
       id: emailId,
       subject: "Quarterly report",
+      providerThreadId: "thread-report",
       senderName: "Manager",
       senderEmailNormalized: "manager@example.invalid",
       receivedAt,
@@ -34,6 +35,7 @@ describe("email query service", () => {
       select: {
         id: true,
         subject: true,
+        providerThreadId: true,
         senderName: true,
         senderEmailNormalized: true,
         receivedAt: true,
@@ -45,12 +47,45 @@ describe("email query service", () => {
       emails: [{
         id: emailId,
         subject: "Quarterly report",
+        threadId: "thread-report",
         senderName: "Manager",
         senderEmail: "manager@example.invalid",
         receivedAt: "2026-10-28T12:00:00.000Z",
         labels: ["INBOX", "IMPORTANT"],
         sourceRevision: 3
       }]
+    });
+  });
+
+  it("includes an older source-linked email without widening owner access", async () => {
+    const requestedEmail = {
+      id: emailId,
+      subject: "Older source email",
+      providerThreadId: "thread-older",
+      senderName: "Manager",
+      senderEmailNormalized: "manager@example.invalid",
+      receivedAt: new Date("2026-10-01T12:00:00.000Z"),
+      labels: ["INBOX"],
+      sourceRevision: 1
+    };
+    const findFirst = vi.fn().mockResolvedValue(requestedEmail);
+    const database = {
+      email: {
+        findMany: vi.fn().mockResolvedValue([]),
+        findFirst
+      }
+    } as unknown as PrismaClient;
+
+    const result = await new EmailQueryService(database).list(ownerId, "50", emailId);
+
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: emailId, userId: ownerId, deletedAt: null }
+    }));
+    expect(result.emails[0]).toMatchObject({
+      id: emailId,
+      subject: "Older source email",
+      threadId: "thread-older",
+      receivedAt: "2026-10-01T12:00:00.000Z"
     });
   });
 });

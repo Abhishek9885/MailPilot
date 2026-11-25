@@ -7,6 +7,7 @@ from mailpilot_ai.config import Settings
 from mailpilot_ai.embeddings.contracts import EmbeddingProvider
 from mailpilot_ai.embeddings.errors import EmbeddingError
 from mailpilot_ai.embeddings.openai import OpenAIEmbeddingProvider
+from mailpilot_ai.observability import InstrumentedEmbeddingProvider
 
 AsyncSleep = Callable[[float], Awaitable[None]]
 TokenCounter = Callable[[str], int]
@@ -29,10 +30,12 @@ def create_embedding_provider(
             "EMBEDDING_CONFIGURATION_INVALID",
             "OPENAI_API_KEY is required to call the configured embedding provider",
         )
-    return OpenAIEmbeddingProvider(
-        settings,
-        transport=transport,
-        sleep=sleep,
-        random_value=random_value,
-        token_counter=token_counter,
+    return InstrumentedEmbeddingProvider(
+        OpenAIEmbeddingProvider(
+            settings,
+            transport=transport,
+            sleep=sleep,
+            random_value=random_value,
+            token_counter=token_counter,
+        )
     )

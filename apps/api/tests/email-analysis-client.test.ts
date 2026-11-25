@@ -14,7 +14,7 @@ describe("FastAPI email analysis client", () => {
         userId: "b9bb0f7d-888f-42db-a58b-4f603426878e",
         emailId: "2992e328-f4fc-4e2c-a05c-5ddb2ce3a065",
         sourceRevision: 2,
-        schemaVersion: "email-analysis-v1",
+        schemaVersion: "email-analysis-v2",
         provider: "openai",
         modelVersion: "gpt-6.1-sol-test",
         responseId: null,

@@ -47,6 +47,23 @@ enum GmailSyncRunStatus {
   @@schema("app")
 }
 
+enum BackgroundJobType {
+  gmail_sync
+
+  @@map("background_job_type")
+  @@schema("app")
+}
+
+enum JobOutboxStatus {
+  pending
+  processing
+  dispatched
+  dead_letter
+
+  @@map("job_outbox_status")
+  @@schema("app")
+}
+
 enum AnalysisStatus {
   queued
   completed
@@ -89,6 +106,10 @@ enum PendingActionStatus {
   rejected
   expired
   cancelled
+  executing
+  succeeded
+  failed
+  reconciliation_required
 
   @@map("pending_action_status")
   @@schema("app")
@@ -99,8 +120,52 @@ enum TaskStatus {
   active
   completed
   dismissed
+  superseded
 
   @@map("task_status")
+  @@schema("app")
+}
+
+enum TaskAssignee {
+  user
+  sender
+  other
+  unknown
+
+  @@map("task_assignee")
+  @@schema("app")
+}
+
+enum TaskDueDateSource {
+  explicit
+  inferred
+  user
+  none
+  unknown
+
+  @@map("task_due_date_source")
+  @@schema("app")
+}
+
+enum CommitmentSpeaker {
+  sender
+  user
+  third_party
+  unknown
+
+  @@map("commitment_speaker")
+  @@schema("app")
+}
+
+enum CommitmentStatus {
+  pending_review
+  active
+  fulfilled
+  withdrawn
+  dismissed
+  superseded
+
+  @@map("commitment_status")
   @@schema("app")
 }
 
@@ -108,8 +173,52 @@ enum FollowUpStatus {
   planned
   completed
   cancelled
+  dismissed
 
   @@map("follow_up_status")
+  @@schema("app")
+}
+
+enum UserMemoryMode {
+  disabled
+  enabled
+  paused
+
+  @@map("user_memory_mode")
+  @@schema("app")
+}
+
+enum UserMemoryType {
+  preference
+  recurring_commitment
+  relevant_fact
+
+  @@map("user_memory_type")
+  @@schema("app")
+}
+
+enum UserMemorySourceKind {
+  user_entered
+  email
+
+  @@map("user_memory_source_kind")
+  @@schema("app")
+}
+
+enum UserMemoryStatus {
+  active
+  stale
+  expired
+
+  @@map("user_memory_status")
+  @@schema("app")
+}
+
+enum UserMemoryConfidenceBasis {
+  user_asserted
+  model_evidence
+
+  @@map("user_memory_confidence_basis")
   @@schema("app")
 }
 
@@ -133,6 +242,7 @@ model User {
   authenticationIdentities AuthenticationIdentity[]
   sessions                 Session[]
   googleConnections        GoogleConnection[]
+  googleCalendarConnection GoogleCalendarConnection?
   emails                   Email[]
   gmailSyncRuns            GmailSyncRun[]
   analyses                 Analysis[]
@@ -141,8 +251,13 @@ model User {
   agentRuns                AgentRun[]
   pendingActions           PendingAction[]
   tasks                    Task[]
+  commitments              Commitment[]
   followUps                FollowUp[]
+  followUpSettings         FollowUpSettings?
+  memorySettings           UserMemorySettings?
+  memories                 UserMemory[]
   auditLogs                AuditLog[]
+  jobOutboxEvents          JobOutboxEvent[]
 
   @@map("users")
   @@schema("app")
@@ -209,9 +324,33 @@ model GoogleConnection {
   emails    Email[]
   syncRuns  GmailSyncRun[]
   agentRuns AgentRun[]
+  tasks     Task[]
+  commitments Commitment[]
 
   @@unique([userId, id], map: "google_connections_user_id_id_key")
   @@map("google_connections")
+  @@schema("app")
+}
+
+model GoogleCalendarConnection {
+  id                        String                 @id @default(uuid()) @db.Uuid
+  userId                    String                 @unique(map: "google_calendar_connections_user_id_key") @map("user_id") @db.Uuid
+  providerSubject           String                 @unique(map: "google_calendar_connections_provider_subject_key") @map("provider_subject") @db.VarChar(255)
+  providerEmailNormalized   String                 @map("provider_email_normalized") @db.VarChar(320)
+  refreshTokenCiphertext    String?                @map("refresh_token_ciphertext") @db.Text
+  refreshTokenNonce         String?                @map("refresh_token_nonce") @db.VarChar(16)
+  refreshTokenAuthTag       String?                @map("refresh_token_auth_tag") @db.VarChar(22)
+  tokenEncryptionKeyVersion String?                @map("token_encryption_key_version") @db.VarChar(64)
+  status                    GoogleConnectionStatus @default(active)
+  grantedScopes             String[]               @default([]) @map("granted_scopes")
+  connectedAt               DateTime               @default(now()) @map("connected_at") @db.Timestamptz(6)
+  disconnectedAt            DateTime?              @map("disconnected_at") @db.Timestamptz(6)
+  createdAt                 DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                 DateTime               @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("google_calendar_connections")
   @@schema("app")
 }
 
@@ -241,13 +380,64 @@ model Email {
   replyDrafts      ReplyDraft[]
   chunks           EmailChunk[]
   tasks            Task[]
+  commitments      Commitment[]
   followUps        FollowUp[]
+  memories         UserMemory[]
 
   @@unique([googleConnectionId, providerMessageId], map: "emails_connection_provider_message_key")
   @@unique([userId, id], map: "emails_user_id_id_key")
   @@index([userId, receivedAt(sort: Desc)], map: "emails_user_received_at_idx")
   @@index([googleConnectionId, providerThreadId, receivedAt(sort: Desc)], map: "emails_connection_thread_received_idx")
   @@map("emails")
+  @@schema("app")
+}
+
+model UserMemorySettings {
+  userId         String         @id @map("user_id") @db.Uuid
+  mode           UserMemoryMode @default(disabled)
+  consentVersion String?        @map("consent_version") @db.VarChar(32)
+  consentedAt    DateTime?      @map("consented_at") @db.Timestamptz(6)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("user_memory_settings")
+  @@schema("app")
+}
+
+model UserMemory {
+  id                String                    @id @default(uuid()) @db.Uuid
+  userId            String                    @map("user_id") @db.Uuid
+  type              UserMemoryType
+  key               String                    @db.VarChar(96)
+  value             String                    @db.VarChar(300)
+    recurrence        Json?                     @db.JsonB
+  sourceKind        UserMemorySourceKind      @map("source_kind")
+  sourceEmailId     String?                   @map("source_email_id") @db.Uuid
+  sourceThreadId    String?                   @map("source_thread_id") @db.VarChar(255)
+  sourceRevision    Int?                      @map("source_revision")
+  sourceObservedAt  DateTime?                 @map("source_observed_at") @db.Timestamptz(6)
+  confidence        Float?                    @db.DoublePrecision
+  confidenceBasis   UserMemoryConfidenceBasis @default(user_asserted) @map("confidence_basis")
+  status            UserMemoryStatus          @default(active)
+  revision          Int                       @default(1)
+  consentVersion    String                    @map("consent_version") @db.VarChar(32)
+  capturedAt        DateTime                  @default(now()) @map("captured_at") @db.Timestamptz(6)
+  approvedAt        DateTime                  @default(now()) @map("approved_at") @db.Timestamptz(6)
+  lastConfirmedAt   DateTime                  @default(now()) @map("last_confirmed_at") @db.Timestamptz(6)
+  expiresAt         DateTime                  @map("expires_at") @db.Timestamptz(6)
+  createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user        User  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  sourceEmail Email? @relation(fields: [userId, sourceEmailId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([userId, type, key], map: "user_memories_user_type_key_key")
+  @@unique([userId, id], map: "user_memories_user_id_id_key")
+  @@index([userId, status, expiresAt], map: "user_memories_user_status_expiry_idx")
+  @@index([userId, updatedAt(sort: Desc)], map: "user_memories_user_updated_idx")
+  @@map("user_memories")
   @@schema("app")
 }
 
@@ -284,6 +474,35 @@ model GmailSyncRun {
   @@index([userId, createdAt(sort: Desc)], map: "gmail_sync_runs_user_created_idx")
   @@index([googleConnectionId, status], map: "gmail_sync_runs_connection_status_idx")
   @@map("gmail_sync_runs")
+  @@schema("app")
+}
+
+model JobOutboxEvent {
+  id             String             @id @default(uuid()) @db.Uuid
+  userId         String             @map("user_id") @db.Uuid
+  jobType        BackgroundJobType  @map("job_type")
+  idempotencyKey String             @map("idempotency_key") @db.VarChar(191)
+  aggregateId    String             @map("aggregate_id") @db.Uuid
+  payload        Json               @db.JsonB
+  status         JobOutboxStatus    @default(pending)
+  attempts       Int                @default(0)
+  failureAttempts Int               @default(0) @map("failure_attempts")
+  availableAt    DateTime           @default(now()) @map("available_at") @db.Timestamptz(6)
+  leaseToken     String?            @map("lease_token") @db.VarChar(36)
+  leaseExpiresAt DateTime?          @map("lease_expires_at") @db.Timestamptz(6)
+  dispatchedAt   DateTime?          @map("dispatched_at") @db.Timestamptz(6)
+  failedAt       DateTime?          @map("failed_at") @db.Timestamptz(6)
+  safeErrorCode  String?            @map("safe_error_code") @db.VarChar(128)
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([userId, idempotencyKey], map: "job_outbox_user_idempotency_key")
+  @@index([userId, aggregateId], map: "job_outbox_user_aggregate_idx")
+  @@index([status, availableAt], map: "job_outbox_status_available_idx")
+  @@index([userId, createdAt(sort: Desc)], map: "job_outbox_user_created_idx")
+  @@map("job_outbox_events")
   @@schema("app")
 }
 
@@ -357,6 +576,7 @@ model EmailChunk {
   email Email @relation(fields: [userId, emailId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
 
   @@unique([emailId, sourceRevision, chunkerVersion, ordinal], map: "email_chunks_source_ordinal_key")
+  @@unique([userId, id], map: "email_chunks_user_id_id_key")
   @@index([userId, emailId, status], map: "email_chunks_user_email_status_idx")
   @@map("email_chunks")
   @@schema("app")
@@ -395,74 +615,167 @@ model AgentRun {
 model PendingAction {
   id               String              @id @default(uuid()) @db.Uuid
   userId           String              @map("user_id") @db.Uuid
-  agentRunId       String              @map("agent_run_id") @db.Uuid
+  agentRunId       String?             @map("agent_run_id") @db.Uuid
   idempotencyKey   String              @map("idempotency_key") @db.VarChar(128)
   actionType       String              @map("action_type") @db.VarChar(64)
+  /// Immutable versioned snapshot: payload, owner, source evidence, risk, creation time, and expiry.
   canonicalPayload Json                @map("canonical_payload")
+  /// SHA-256 of the canonicalized snapshot; the database trigger prevents snapshot-column updates.
   payloadHash      String              @map("payload_hash") @db.Char(64)
   payloadVersion   Int                 @default(1) @map("payload_version")
   status           PendingActionStatus @default(pending)
+  executionKey     String?             @unique(map: "pending_actions_execution_key_key") @map("execution_key") @db.Char(64)
+  executionStartedAt DateTime?         @map("execution_started_at") @db.Timestamptz(6)
+  executionLeaseExpiresAt DateTime?    @map("execution_lease_expires_at") @db.Timestamptz(6)
+  executionAttempts Int                @default(0) @map("execution_attempts")
+  executionResultCode String?          @map("execution_result_code") @db.VarChar(128)
+  reconciliationClaimId String?        @map("reconciliation_claim_id") @db.Uuid
+  reconciliationLeaseExpiresAt DateTime? @map("reconciliation_lease_expires_at") @db.Timestamptz(6)
+  reconciliationAttempts Int           @default(0) @map("reconciliation_attempts")
   expiresAt        DateTime            @map("expires_at") @db.Timestamptz(6)
   decidedAt        DateTime?           @map("decided_at") @db.Timestamptz(6)
   createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime            @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  agentRun AgentRun @relation(fields: [userId, agentRunId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+  agentRun AgentRun? @relation(fields: [userId, agentRunId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
 
   @@unique([userId, idempotencyKey], map: "pending_actions_user_idempotency_key")
   @@index([userId, status, expiresAt], map: "pending_actions_user_status_expires_idx")
+  @@index([status, executionLeaseExpiresAt], map: "pending_actions_execution_lease_idx")
+  @@index([status, reconciliationLeaseExpiresAt], map: "pending_actions_reconciliation_lease_idx")
   @@index([userId, agentRunId], map: "pending_actions_user_run_idx")
   @@map("pending_actions")
   @@schema("app")
 }
 
 model Task {
-  id            String     @id @default(uuid()) @db.Uuid
-  userId        String     @map("user_id") @db.Uuid
-  agentRunId    String?    @map("agent_run_id") @db.Uuid
-  sourceEmailId String?    @map("source_email_id") @db.Uuid
-  title         String     @db.VarChar(500)
-  description   String?    @db.Text
-  dueAt         DateTime?  @map("due_at") @db.Timestamptz(6)
-  dueTimezone   String?    @map("due_timezone") @db.VarChar(128)
-  confidence    Float?     @db.DoublePrecision
-  status        TaskStatus @default(pending_review)
-  completedAt   DateTime?  @map("completed_at") @db.Timestamptz(6)
-  createdAt     DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt     DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                String      @id @default(uuid()) @db.Uuid
+  userId            String      @map("user_id") @db.Uuid
+  agentRunId        String?     @map("agent_run_id") @db.Uuid
+  sourceEmailId     String?     @map("source_email_id") @db.Uuid
+  sourceConnectionId String?    @map("source_connection_id") @db.Uuid
+  sourceThreadId    String?     @map("source_thread_id") @db.VarChar(255)
+  sourceRevision    Int         @default(1) @map("source_revision")
+  sourceEvidence    String?     @map("source_evidence") @db.Text
+  deduplicationKey  String?     @map("deduplication_key") @db.Char(64)
+  title             String      @db.VarChar(500)
+  description       String?     @db.Text
+  assignee          TaskAssignee @default(unknown)
+  dueAt             DateTime?   @map("due_at") @db.Timestamptz(6)
+  dueTimezone       String?     @map("due_timezone") @db.VarChar(128)
+  dueDateSource     TaskDueDateSource @default(unknown) @map("due_date_source")
+  confidence        Float?      @db.DoublePrecision
+  status            TaskStatus  @default(pending_review)
+  lastObservedAt    DateTime    @default(now()) @map("last_observed_at") @db.Timestamptz(6)
+  reviewedAt        DateTime?   @map("reviewed_at") @db.Timestamptz(6)
+  titleEditedAt      DateTime?   @map("title_edited_at") @db.Timestamptz(6)
+  completedAt       DateTime?   @map("completed_at") @db.Timestamptz(6)
+  dismissedAt       DateTime?   @map("dismissed_at") @db.Timestamptz(6)
+  supersededAt      DateTime?   @map("superseded_at") @db.Timestamptz(6)
+  createdAt         DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user        User       @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   agentRun    AgentRun?  @relation(fields: [userId, agentRunId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+  sourceConnection GoogleConnection? @relation(fields: [userId, sourceConnectionId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
   sourceEmail Email?     @relation(fields: [userId, sourceEmailId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
   followUps   FollowUp[]
 
   @@unique([userId, id], map: "tasks_user_id_id_key")
+  @@unique([userId, sourceConnectionId, sourceThreadId, deduplicationKey], map: "tasks_thread_deduplication_key")
   @@index([userId, status, dueAt], map: "tasks_user_status_due_at_idx")
   @@index([userId, agentRunId], map: "tasks_user_run_idx")
   @@index([userId, sourceEmailId], map: "tasks_user_source_email_idx")
+  @@index([userId, sourceConnectionId, sourceThreadId, status], map: "tasks_user_thread_status_idx")
   @@map("tasks")
   @@schema("app")
 }
 
+model Commitment {
+  id               String             @id @default(uuid()) @db.Uuid
+  userId           String             @map("user_id") @db.Uuid
+  sourceEmailId    String             @map("source_email_id") @db.Uuid
+  sourceConnectionId String           @map("source_connection_id") @db.Uuid
+  sourceThreadId   String             @map("source_thread_id") @db.VarChar(255)
+  sourceRevision   Int                @default(1) @map("source_revision")
+  sourceEvidence   String             @map("source_evidence") @db.Text
+  deduplicationKey String             @map("deduplication_key") @db.Char(64)
+  speaker          CommitmentSpeaker
+  statement        String             @db.VarChar(300)
+  dueAt            DateTime?          @map("due_at") @db.Timestamptz(6)
+  dueTimezone      String?            @map("due_timezone") @db.VarChar(128)
+  confidence       Float?             @db.DoublePrecision
+  status           CommitmentStatus   @default(pending_review)
+  lastObservedAt   DateTime           @default(now()) @map("last_observed_at") @db.Timestamptz(6)
+  reviewedAt       DateTime?          @map("reviewed_at") @db.Timestamptz(6)
+  fulfilledAt      DateTime?          @map("fulfilled_at") @db.Timestamptz(6)
+  withdrawnAt      DateTime?          @map("withdrawn_at") @db.Timestamptz(6)
+  dismissedAt      DateTime?          @map("dismissed_at") @db.Timestamptz(6)
+  supersededAt     DateTime?          @map("superseded_at") @db.Timestamptz(6)
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  sourceConnection GoogleConnection @relation(fields: [userId, sourceConnectionId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+  email            Email            @relation(fields: [userId, sourceEmailId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+  followUps        FollowUp[]
+
+  @@unique([userId, id], map: "commitments_user_id_id_key")
+  @@unique([userId, sourceConnectionId, sourceThreadId, deduplicationKey], map: "commitments_thread_deduplication_key")
+  @@index([userId, status, dueAt], map: "commitments_user_status_due_at_idx")
+  @@index([userId, sourceConnectionId, sourceThreadId, status], map: "commitments_user_thread_status_idx")
+  @@map("commitments")
+  @@schema("app")
+}
+
 model FollowUp {
-  id          String         @id @default(uuid()) @db.Uuid
-  userId      String         @map("user_id") @db.Uuid
-  emailId     String         @map("email_id") @db.Uuid
-  taskId      String?        @map("task_id") @db.Uuid
-  scheduledAt DateTime       @map("scheduled_at") @db.Timestamptz(6)
-  status      FollowUpStatus @default(planned)
-  completedAt DateTime?      @map("completed_at") @db.Timestamptz(6)
-  createdAt   DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                String         @id @default(uuid()) @db.Uuid
+  userId            String         @map("user_id") @db.Uuid
+  emailId           String         @map("email_id") @db.Uuid
+  taskId            String?        @map("task_id") @db.Uuid
+  commitmentId      String?        @map("commitment_id") @db.Uuid
+  sourceThreadId    String         @map("source_thread_id") @db.VarChar(255)
+  kind              String         @db.VarChar(32)
+  deduplicationKey  String         @map("deduplication_key") @db.VarChar(255)
+  title             String         @db.VarChar(300)
+  reason            String         @db.VarChar(500)
+  scheduledAt       DateTime       @map("scheduled_at") @db.Timestamptz(6)
+  lastActivatedAt   DateTime       @default(now()) @map("last_activated_at") @db.Timestamptz(6)
+  status            FollowUpStatus @default(planned)
+  completedAt       DateTime?      @map("completed_at") @db.Timestamptz(6)
+  createdAt         DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  email Email @relation(fields: [userId, emailId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
-  task  Task? @relation(fields: [userId, taskId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  email      Email       @relation(fields: [userId, emailId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+  task       Task?       @relation(fields: [userId, taskId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade)
+  commitment Commitment? @relation(fields: [userId, commitmentId], references: [userId, id], onDelete: Cascade, onUpdate: Cascade, map: "follow_ups_commitment_owner_fkey")
 
-  @@unique([emailId, scheduledAt], map: "follow_ups_email_schedule_key")
+  @@unique([userId, deduplicationKey], map: "follow_ups_user_dedupe_key")
   @@index([userId, status, scheduledAt], map: "follow_ups_user_status_schedule_idx")
+  @@index([userId, lastActivatedAt], map: "follow_ups_user_activated_idx")
   @@map("follow_ups")
+  @@schema("app")
+}
+
+model FollowUpSettings {
+  userId                       String   @id @map("user_id") @db.Uuid
+  enabled                      Boolean  @default(false)
+  commitmentRemindersEnabled   Boolean  @default(true) @map("commitment_reminders_enabled")
+  staleThreadSuggestionsEnabled Boolean @default(true) @map("stale_thread_suggestions_enabled")
+  commitmentLeadHours          Int      @default(24) @map("commitment_lead_hours")
+  staleThreadAfterDays         Int      @default(5) @map("stale_thread_after_days")
+  timeZone                     String   @default("UTC") @map("time_zone") @db.VarChar(64)
+  quietHoursStart              Int?     @map("quiet_hours_start")
+  quietHoursEnd                Int?     @map("quiet_hours_end")
+  dailySuggestionLimit         Int      @default(5) @map("daily_suggestion_limit")
+  createdAt                    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("follow_up_settings")
   @@schema("app")
 }
 

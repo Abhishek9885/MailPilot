@@ -1,0 +1,104 @@
+name: CI and production deploy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mailpilot-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: Lint, typecheck, integration tests, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.7-pg17
+        env:
+          POSTGRES_DB: mailpilot_test
+          POSTGRES_USER: mailpilot
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U mailpilot -d mailpilot_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://mailpilot:ci-only-not-a-secret@localhost:55432/mailpilot_test?schema=app
+      DATABASE_TEST_URL: postgresql://mailpilot:ci-only-not-a-secret@localhost:55432/mailpilot_test?schema=app
+      MAILPILOT_TEST_DATABASE_URL: postgresql://mailpilot:ci-only-not-a-secret@localhost:55432/mailpilot_test?schema=app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.12.18
+      - name: Install locked dependencies
+        run: |
+          npm ci
+          uv sync --project apps/ai --locked
+      - name: Check dependency advisories
+        run: npm audit --audit-level=high
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit and PostgreSQL integration tests
+        run: npm test
+      - name: Validate Prisma schema
+        run: npm run db:validate
+      - name: Build Node workspaces without production credentials
+        env:
+          DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build?schema=app
+          NEXT_PUBLIC_API_BASE_URL: https://mailpilot-web.onrender.com
+          API_INTERNAL_HOSTPORT: mailpilot-api:10000
+        run: npm run build
+      - name: Build FastAPI distribution
+        run: uv build --project apps/ai --out-dir "$RUNNER_TEMP/mailpilot-ai-dist"
+
+  deploy-production:
+    name: Deploy production services in dependency order
+    needs: checks
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    environment:
+      name: production
+      url: https://mailpilot-web.onrender.com
+    concurrency:
+      group: mailpilot-production-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      deployments: write
+    # Configure this GitHub Environment to require an independent reviewer;
+    # they verify the release record and completed migrations before approval.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+      - name: Deploy API, AI, worker, then web at this commit
+        env:
+          RENDER_API_TOKEN: ${{ secrets.RENDER_API_TOKEN }}
+          RENDER_API_SERVICE_ID: ${{ secrets.RENDER_API_SERVICE_ID }}
+          RENDER_AI_SERVICE_ID: ${{ secrets.RENDER_AI_SERVICE_ID }}
+          RENDER_WORKER_SERVICE_ID: ${{ secrets.RENDER_WORKER_SERVICE_ID }}
+          RENDER_WEB_SERVICE_ID: ${{ secrets.RENDER_WEB_SERVICE_ID }}
+          DEPLOY_COMMIT: ${{ github.sha }}
+        run: node scripts/deploy-render.mjs
+

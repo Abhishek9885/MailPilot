@@ -39,7 +39,7 @@ Individual service commands are documented in `README.md`. TypeScript workspaces
 
 ## Security constraints
 
-- Never commit `.env`, tokens, keys, personal data, or production dumps. `.env.example` must contain only conspicuous local placeholders.
+- Never commit `.env` or `.env.*` files, including dotenv templates, tokens, keys, personal data, or production dumps. Keep local environment files out of Git.
 - Enforce owner/account scoping in every future data access. Treat email bodies as untrusted content and future model output as untrusted input.
 - Do not put Gmail credentials in Next.js, shared types, AI-service settings, logs, traces, or test fixtures.
 - Any future external side effect requires a durable, exact-payload approval checked by Express. Graph state alone is never authorization.

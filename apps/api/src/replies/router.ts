@@ -33,7 +33,12 @@ export function createReplyDraftRouter(options: ReplyDraftRouterOptions): Router
       const authContext = request.authContext;
       if (!authContext) throw new ApiError(401, "UNAUTHORIZED", "Sign-in is required");
       const emailId = typeof request.params.emailId === "string" ? request.params.emailId : "";
-      const result = await options.service.generate(authContext.userId, emailId, request.body);
+      const result = await options.service.generate(
+        authContext.userId,
+        emailId,
+        request.body,
+        typeof response.locals.requestId === "string" ? response.locals.requestId : undefined
+      );
       response.status(200).json(result);
     } catch (error: unknown) {
       next(error);
