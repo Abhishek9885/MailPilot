@@ -1,6 +1,6 @@
 # MailPilot AI architecture
 
-**Status:** Phase 1 foundation, Phase 3.2 data models, Phase 3.3 application authentication, Phase 4.1 Gmail OAuth, Phase 4.2 Gmail API client, Phase 4.3 email parsing/storage, Phase 4.4 bounded Gmail synchronization, Phase 5.1 provider-neutral LLM contracts/OpenAI adapter, Phase 5.2 structured email analysis, Phase 5.3 suggestion-only reply drafting, Phase 5.4 analysis UI/evaluation harness, Phase 6.1 embedding adapter, Phase 6.2 deterministic email chunking, Phase 6.3 pgvector persistence, Phase 7 retrieval/RAG, and Phases 8.1-8.4 read-only LangGraph workflow, planning, tool routing, and persistent checkpoint recovery are implemented. The frozen-set model baseline is pending provider configuration. Durable approval-gated agent workflows remain planned.
+**Status:** Phase 1 foundation, Phase 3.2 data models, Phase 3.3 application authentication, Phase 4.1 Gmail OAuth, Phase 4.2 Gmail API client, Phase 4.3 email parsing/storage, Phase 4.4 bounded Gmail synchronization, Phase 5.1 provider-neutral LLM contracts/OpenAI adapter, Phase 5.2 structured email analysis, Phase 5.3 suggestion-only reply drafting, Phase 5.4 analysis UI/evaluation harness, Phase 6.1 embedding adapter, Phase 6.2 deterministic email chunking, Phase 6.3 pgvector persistence, Phase 7 retrieval/RAG, Phases 8.1-8.4 read-only LangGraph workflow/planning/tool routing/persistent checkpoint recovery, Phase 9 persisted approval lifecycle, Phase 11.1-11.2 source-linked tasks, Phase 11.3-11.4 Calendar connection and approval-gated event creation, Phase 12.2 user-memory management, and Phase 12.3 Node background jobs are implemented. Phase 12.1 documents the memory design. Calendar event creation is disabled by default. The frozen-set model baseline is pending provider configuration.
 
 ## Product scope
 
@@ -10,8 +10,8 @@
 - The user can request a bounded initial mailbox import, with a proposed default window of the most recent 90 days. The final message cap and retention period are open decisions.
 - MailPilot stores normalized message and thread data, builds account-scoped hybrid search, and returns historical context with message-level source references.
 - It extracts a summary, category/priority signals, action items, and possible deadlines into typed, reviewable records. Unknown dates remain unknown; inferred dates carry evidence and confidence.
-- The user can ask for a reply draft for a selected thread and can send it only after explicit approval of the exact recipients, subject, body, and thread. The MVP never sends autonomously.
-- It records user-visible task candidates and agent activity, supports reconnect/disconnect and deletion of MailPilot’s copy, and can recover a paused approved workflow.
+- The user can ask for an editable reply draft for a selected thread. Drafts remain suggestions; Gmail sending is not implemented.
+- It records user-visible task candidates and agent activity, can optionally connect a separate Google Calendar account, and supports creating an event only after approval of its exact proposal. Calendar event creation is disabled by default. MailPilot can recover a paused approved workflow.
 - A scikit-learn text-classification baseline and a reproducible evaluation set are delivered before model-driven prioritization is treated as dependable.
 
 ### Non-goals for MVP
@@ -19,7 +19,7 @@
 - Multiple mailbox providers, shared/team inboxes, delegated access, or multiple Gmail accounts per user.
 - Autonomous sending, forwarding, archiving, deleting, labeling, or changing Gmail settings.
 - Reading or indexing attachment contents, fetching URLs from message bodies, or rendering active email HTML. Attachment metadata may be stored for display.
-- Calendar or task-manager integrations, browser extensions, mobile clients, or a general-purpose autonomous agent.
+- Calendar event updates/cancellations, task-manager integrations, browser extensions, mobile clients, or a general-purpose autonomous agent.
 - Full historical import by default, realtime mailbox push, user-configurable model training, or cross-user learning.
 - A separate vector database, a second agent framework, or more than the three application boundaries below.
 
@@ -28,9 +28,9 @@
 1. MailPilot is a multi-tenant web product. Every persisted object is owned by a user and usually scoped to a Gmail account. If this is initially single-tenant/internal, remove the SaaS-specific account and session assumptions before implementation.
 2. The MVP reads Gmail with `gmail.readonly`. Sending is a later incremental authorization for `gmail.send`; no send scope is requested until the send feature is enabled. Google classifies these scopes and states that Gmail restricted-scope data stored or transmitted by a server requires additional verification/security assessment. Confirm Google verification and assessment obligations before real-user launch. See [Gmail API scopes](https://developers.google.com/workspace/gmail/api/auth/scopes).
 3. PostgreSQL is the system of record. Prisma owns application-domain tables; the Python service owns its AI/index tables and checkpoint tables in a separate schema in the same database. This keeps ownership clear without creating another database service. Cross-schema foreign keys are optional; stable opaque IDs and account filters are required either way.
-4. Redis/BullMQ are deferred. Initial sync and AI indexing are delivered through a transactional PostgreSQL outbox and workers packaged with the Express and FastAPI deployments. Add Redis/BullMQ only when workload or operational measurements justify it.
+4. PostgreSQL is the source of truth for job intent and progress. Express writes a `JobOutboxEvent` in the same transaction as a Gmail sync run; a separate Node worker relays it to BullMQ/Redis and processes the job using the run's PostgreSQL checkpoints and lease. This is justified because bounded sync work can exceed one web request and should resume after interruption. Queue payloads contain only user/run/request identifiers. Queue delivery is at least once, so email upserts and sync checkpoints remain idempotent. FastAPI work remains behind the authenticated HTTP client boundary; Python does not depend on BullMQ or Redis queue internals.
 5. The proposed initial sync window is 90 days, but its hard message cap and retention period need confirmation. OpenAI is the first LLM adapter and GPT-6.1 Sol is the initial evaluation candidate; the runtime model remains configurable. The embedding adapter defaults to OpenAI `text-embedding-3-small` at 1,536 dimensions. Production data-region/retention approval and the index version policy remain open. Adapters persist provider/model/version metadata; a model change that changes dimensions or vector semantics requires a separately versioned index and controlled re-embedding. See [LLM selection](llm-provider.md) and [embedding selection](embedding-provider.md).
-6. Application identity uses Google OpenID Connect with only `openid email`. Gmail authorization uses a separate client configuration and separate, feature-specific scopes; signing in does not connect or authorize a mailbox.
+6. Application identity uses Google OpenID Connect with only `openid email`. Gmail and Google Calendar authorization use separate client configurations and feature-specific scopes; signing in does not connect or authorize either provider. Calendar event creation uses the `calendar.events.owned` scope and is disabled by default.
 
 ## System context
 
@@ -40,14 +40,24 @@ flowchart LR
   W -->|HTTPS, session cookie| A[Express API]
   A -->|OIDC app sign-in| I[Google Identity]
   A -->|Separate Gmail authorization| G[Gmail API]
+  A -->|Separate optional Calendar authorization| C[Google Calendar API]
   A -->|Private REST, signed service identity| F[FastAPI + LangGraph]
   A -->|Prisma, app schema| P[(PostgreSQL + pgvector)]
+  A -->|transactional job outbox| P
+  J[Node BullMQ worker] -->|claim outbox, checkpoint progress| P
+  J <-->|Gmail sync queue| R[(Redis)]
+  J -->|Gmail API, user-scoped token provider| G
   F -->|SQLAlchemy/raw SQL, ai schema| P
   F -->|provider adapter, minimized prompt/context| L[Chosen LLM / embedding provider]
-  A -->|transactional outbox; same deployment worker| F
 ```
 
-The browser only calls Express for API data and mutations. Application sign-in uses Google OIDC identity claims only; mailbox authorization is a separate Google OAuth grant requested only by a future Gmail connection flow. The browser never receives provider tokens and does not call Gmail or the model provider. Express owns user authentication, Gmail OAuth, raw mailbox synchronization, approval records, and all Gmail side effects. FastAPI owns extraction, classification, chunking, embedding, hybrid retrieval, evaluation hooks, and graph execution. It never possesses Gmail credentials. PostgreSQL is shared infrastructure, not a fourth application service; each application uses a separate database role and schema grants.
+The browser only calls Express for API data and mutations. Application sign-in uses Google OIDC identity claims only; Gmail and Calendar authorization are separate Google OAuth grants. The browser never receives provider tokens and does not call Gmail, Calendar, or the model provider. Express owns user authentication, Gmail OAuth/synchronization, the separate Calendar OAuth connection, approval records, and all external provider side effects. Calendar tokens are separately encrypted and never sent to FastAPI. FastAPI owns extraction, classification, chunking, embedding, hybrid retrieval, evaluation hooks, and graph execution. It never possesses Gmail or Calendar credentials. PostgreSQL is shared infrastructure, not a fourth application service; each application uses a separate database role and schema grants.
+
+## User memory boundary (Phases 12.1–12.2)
+
+The design is documented in [memory-design.md](memory-design.md). Express/Prisma now owns opt-in settings, saved memory, correction, expiry, source provenance, and per-user retrieval. Values are saved only after an explicit user action; email content cannot create or replace a value. The retrieval API returns at most 10 matches and 2,000 characters using deterministic lexical overlap after applying the authenticated owner predicate. Stale source revisions and expired items are excluded. Pause disables retrieval; turning memory off deletes the rows.
+
+There is not yet an Express-to-FastAPI memory context integration. The retrieval UI is a preview, not a claim that email analysis or the LangGraph workflow uses saved memory. Any future runtime handoff must send only a small selected subset in transient context, label memory as data rather than instructions, and keep values out of checkpoints. Existing tasks, commitments, email evidence, and graph state are not memory and are never promoted automatically.
 
 ## Boundaries and monorepo layout
 
@@ -117,11 +127,11 @@ sequenceDiagram
 
 ## Gmail synchronization and indexing
 
-The first sync is bounded and paginated. It captures the Gmail profile history ID before listing messages, then checkpoints pages and message IDs in PostgreSQL. Store Gmail message/thread IDs, labels, internal timestamp, permitted sender/subject headers, normalized plain text, sanitized HTML, and attachment metadata only. Never fetch or persist attachment contents in MVP. The message body is untrusted input. The user-scoped email upsert is idempotent by connection and Gmail message ID. Sync steps process at most 25 messages per request; PostgreSQL leases allow recovery if an API request is interrupted. This phase does not start background jobs or perform AI indexing.
+The first sync is bounded and paginated. It captures the Gmail profile history ID before listing messages, then checkpoints pages and message IDs in PostgreSQL. Store Gmail message/thread IDs, labels, internal timestamp, permitted sender/subject headers, normalized plain text, sanitized HTML, and attachment metadata only. Never fetch or persist attachment contents in MVP. The message body is untrusted input. The user-scoped email upsert is idempotent by connection and Gmail message ID. A transactional outbox creates a stable BullMQ job for each sync; the Node worker processes at most 20 batches of up to 25 messages per delivery and resumes from PostgreSQL checkpoints on bounded retries. The UI polls owner-scoped progress and can resume monitoring after a page reload.
 
 Use Gmail `history.list` for incremental added, deleted, and label changes. Keep the old cursor until every page and message ID has been processed, and persist pending IDs so retried deliveries can repeat idempotent email upserts. A transient failure retains the current checkpoint. When Gmail returns 404 for an expired history ID, mark the run `resync_required`, preserve the old connection cursor, and let the user start a bounded initial sync. A fresh initial sync captures a new cursor and reconciles the newest messages within its cap; a subsequent incremental sync applies changes made during that scan. Push watch notifications are a later optimization. See [Synchronize clients with Gmail](https://developers.google.com/workspace/gmail/api/guides/sync).
 
-The public API exposes start, bounded step, progress, and cancellation endpoints. Gmail authorization remains `gmail.readonly`; synchronization performs no mailbox mutations. See [sync API contracts](api-contracts.md#gmail-sync-behavior-and-resynchronization).
+The public API exposes start, active/progress polling, and cancellation endpoints. The browser cannot advance a batch directly. Gmail authorization remains `gmail.readonly`; synchronization performs no mailbox mutations. Redis and a live worker heartbeat are included in API readiness. See [sync API contracts](api-contracts.md#gmail-sync-behavior-and-resynchronization) and [background job operations](background-jobs.md).
 
 Threading is a Gmail association, not a reason to concatenate a whole conversation into one embedding. Chunk each message independently with thread/message provenance. Retrieval filters must include account ID before ranking, and output citations identify the source message, thread, timestamp, and chunk. Combine PostgreSQL full-text search and pgvector ranking; only add reranking after the evaluation set demonstrates a measurable gain. See [ingestion and deletion details](data-model.md#ingestion-indexing-and-deletion).
 

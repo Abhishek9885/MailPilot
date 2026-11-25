@@ -1,4 +1,19 @@
 services:
+  redis:
+    image: redis:7.4.12-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:56379:6379"
+    volumes:
+      - mailpilot-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      start_period: 5s
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
   db:
     image: pgvector/pgvector:0.8.7-pg17
     restart: unless-stopped
@@ -19,3 +34,4 @@ services:
 
 volumes:
   mailpilot-postgres:
+  mailpilot-redis:

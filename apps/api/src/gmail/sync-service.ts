@@ -80,7 +80,8 @@ export class GmailSyncService {
   public async start(
     userId: string,
     mode: GmailSyncMode,
-    requestedMaxMessages?: number
+    requestedMaxMessages?: number,
+    requestId?: string
   ): Promise<GmailSyncProgress> {
     const maxMessages = requestedMaxMessages ?? DEFAULT_INITIAL_SYNC_MAX_MESSAGES;
     if (!Number.isInteger(maxMessages) || maxMessages < 1 || maxMessages > MAX_INITIAL_SYNC_MESSAGES) {
@@ -121,8 +122,23 @@ export class GmailSyncService {
       googleConnectionId: connection.id,
       mode,
       startHistoryId,
-      maxMessages: mode === "initial" ? maxMessages : MAX_INITIAL_SYNC_MESSAGES
+      maxMessages: mode === "initial" ? maxMessages : MAX_INITIAL_SYNC_MESSAGES,
+      requestId: requestId ?? randomUUID()
     });
+    return toProgress(run);
+  }
+
+  public async getActiveProgress(userId: string): Promise<GmailSyncProgress | null> {
+    const connection = await this.options.store.getConnectionForUser(userId);
+    if (!connection) return null;
+    const run = await this.options.store.getActiveRun(userId, connection.id);
+    return run ? toProgress(run) : null;
+  }
+
+  public async failAfterQueueRetries(userId: string, runId: string, safeErrorCode: string): Promise<GmailSyncProgress> {
+    const failRun = this.options.store.failAfterQueueRetries;
+    if (!failRun) throw new ApiError(500, "SYNC_QUEUE_FAILURE", "Gmail sync could not be recovered");
+    const run = await failRun.call(this.options.store, userId, runId, safeErrorCode, this.now());
     return toProgress(run);
   }
 

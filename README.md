@@ -1,15 +1,19 @@
 # MailPilot AI
 
-MailPilot AI is a privacy-minded Gmail operations agent scaffold. It supports application sign-in through Google OpenID Connect with database-backed sessions, read-only Gmail synchronization, owner-scoped structured email analysis, evidence-linked reply suggestions, grounded historical email answers, and a connected-mailbox analysis panel. Reply suggestions are editable and stored without any send capability. The synthetic evaluation set and scorer are in place; the live-model baseline awaits provider configuration.
+MailPilot AI is a privacy-minded email assistant. It supports application sign-in through Google OpenID Connect with database-backed sessions, read-only Gmail synchronization, owner-scoped structured email analysis, evidence-linked reply suggestions, grounded historical email answers, source-linked tasks, persisted action approvals, and optional Google Calendar connection. Calendar event creation requires an approved exact proposal and is disabled by default. Reply suggestions remain editable and cannot be sent; Gmail sending is not implemented.
 
 ## Architecture
 
 - `apps/web`: Next.js App Router, TypeScript, Tailwind CSS. Browser UI; no provider credentials.
-- `apps/api`: Express and TypeScript. Public API boundary, Google OIDC application sign-in, Gmail OAuth with read-only access, bounded Gmail synchronization, owner-scoped email analysis and reply-suggestion persistence, and database readiness check.
+- `apps/api`: Express and TypeScript. Public API boundary, Google OIDC application sign-in, separate Gmail read-only and Calendar OAuth, owner-scoped Gmail sync jobs, email analysis and reply-suggestion persistence, persisted approvals, approval-gated Calendar event creation, and dependency readiness checks. A separate Node worker dispatches durable jobs through BullMQ.
 - `apps/ai`: FastAPI and Python. AI service health, provider-neutral LLM and embedding contracts, structured email analysis, evidence-validated reply suggestions, and a persistent, read-only LangGraph RAG workflow with bounded intent planning and owner-scoped search/answer tools.
 - `packages/shared`: TypeScript types and Zod runtime schemas shared by web and API.
 - `prisma/`: stable Prisma ORM 7 schema and initial migration. PostgreSQL is local system-of-record infrastructure; `vector` extension is created in the initial migration.
 - `docs/`: approved architecture, contracts, data model, security, evaluation, and roadmap.
+
+The proposed first-hosted topology, platform/cost rationale, deployment diagram, migration and rollback order, backup policy, OAuth URLs, and operator recovery procedures are in [docs/deployment-architecture.md](docs/deployment-architecture.md). It also lists the repository prerequisites that must be closed before deploying real mailbox data.
+
+The Render Blueprint, GitHub CI and protected deployment workflow, production secrets/roles, ordered migration procedure, health checks, and rollback instructions are in [docs/ci-cd-production.md](docs/ci-cd-production.md).
 
 Application and package versions are exact-pinned in `package.json` and `apps/ai/pyproject.toml`; `package-lock.json` and `apps/ai/uv.lock` pin transitive dependencies. Version selection and local requirements are documented in [docs/engineering-setup.md](docs/engineering-setup.md).
 
@@ -17,6 +21,9 @@ Python service development and dependency updates are documented in [apps/ai/REA
 The initial embedding model and adapter limits are documented in [docs/embedding-provider.md](docs/embedding-provider.md).
 The read-only RAG StateGraph and its Mermaid visualization are documented in [docs/rag-workflow.mmd](docs/rag-workflow.mmd).
 Checkpoint identity, resume behavior, graph traces, and failure recovery are documented in [docs/agent-workflow-persistence.md](docs/agent-workflow-persistence.md).
+Google Calendar setup, OAuth separation, time-zone validation, approval requirements, idempotency, and reconciliation are documented in [docs/calendar-integration.md](docs/calendar-integration.md).
+Phase 12.2 adds opt-in, owner-scoped memory management, source provenance, correction/expiry/deletion controls, and a bounded lexical retrieval preview in Settings. Memory values are not yet sent to email analysis or the LangGraph workflow. See [docs/memory-design.md](docs/memory-design.md).
+Phase 12.3 moves Gmail synchronization to a durable Node worker with Redis/BullMQ, a PostgreSQL transactional outbox, bounded retries, and persisted failure records. See [docs/background-jobs.md](docs/background-jobs.md).
 
 ## Manual prerequisites
 
@@ -24,8 +31,9 @@ Checkpoint identity, resume behavior, graph traces, and failure recovery are doc
 2. Python **3.12.x** and `uv` **0.12.18** ([official installation instructions](https://docs.astral.sh/uv/getting-started/installation/)).
 3. Docker Desktop with Docker Compose v2, started and available on PATH. Docker is not installed in every development environment; without it, PostgreSQL health readiness will stay unavailable unless a compatible local PostgreSQL server with pgvector is provided.
 4. Network access to npm and Python package registries for a first install. Provider calls require `OPENAI_API_KEY`; mocked tests and health routes do not.
-5. Host ports **3000**, **4000**, **8000**, and **55432** must be available. Compose publishes the database only on loopback; its port avoids the conventional local PostgreSQL port `5432`.
+5. Host ports **3000**, **4000**, **8000**, **55432**, and **56379** must be available. Compose publishes PostgreSQL and Redis only on loopback; their ports avoid the conventional local PostgreSQL and Redis ports.
 6. To test real sign-in and Gmail connection, configure the separate Google OAuth clients described in [docs/google-cloud-setup.md](docs/google-cloud-setup.md). Application sign-in requests only `openid email`; Gmail authorization separately requests the read-only Gmail scope. Server-to-server analysis and reply drafting require a shared local `AI_SERVICE_TOKEN` and an `OPENAI_API_KEY` for FastAPI.
+7. To connect Calendar, follow [docs/calendar-integration.md](docs/calendar-integration.md) to create a separate OAuth client and configure its encryption key. Leave `GOOGLE_CALENDAR_EVENTS_ENABLED=false` while testing connection and proposal approval. Provider event creation is off by default.
 
 ## Setup
 
@@ -74,10 +82,13 @@ Or run each in its own terminal:
 ```powershell
 npm run dev:web
 npm run dev:api
+npm run dev:worker
 npm run dev:ai
 ```
 
-The web, API, and AI service listen at `http://localhost:3000`, `http://localhost:4000`, and `http://localhost:8000`. Start PostgreSQL with `npm run db:up` before launching the services. `npm run dev:all` starts all three applications and stops the group when interrupted with Ctrl+C.
+The web, API, and AI service listen at `http://localhost:3000`, `http://localhost:4000`, and `http://localhost:8000`. `npm run db:up` starts PostgreSQL and Redis; wait for both containers to become healthy before launching services. `npm run dev:all` starts the web app, API, Node background worker, and AI service. Sync requests now enqueue work and the settings page polls for progress. Press Ctrl+C to stop all processes.
+
+The worker can also run separately with `npm run dev:worker`. Do not run multiple copies of the worker in watch mode against the same source tree.
 
 ## Health checks
 
@@ -85,10 +96,11 @@ The web, API, and AI service listen at `http://localhost:3000`, `http://localhos
 |---|---|---|
 | Web liveness | `http://localhost:3000/api/health` | HTTP 200, JSON `{ "service": "web", "status": "ok", "requestId": "..." }` |
 | Express liveness | `http://localhost:4000/health/live` | HTTP 200, JSON status `ok` |
-| Express readiness + PostgreSQL | `http://localhost:4000/health/ready` | HTTP 200 only when `SELECT 1` succeeds; otherwise HTTP 503 with a safe error code |
+| Express readiness + PostgreSQL/Redis/worker | `http://localhost:4000/health/ready` | HTTP 200 only when PostgreSQL and Redis respond and at least one Node worker heartbeat is current; otherwise HTTP 503 with safe status |
 | FastAPI liveness | `http://localhost:8000/internal/v1/health/live` (`/health/live` alias) | HTTP 200, JSON status `ok` |
 | FastAPI readiness + PostgreSQL | `http://localhost:8000/internal/v1/health/ready` (`/health/ready` alias) | HTTP 200 only when `SELECT 1` succeeds; otherwise HTTP 503 with safe status |
 | PostgreSQL/pgvector | `docker compose exec db pg_isready -U mailpilot -d mailpilot` | `accepting connections`; `SELECT extname FROM pg_extension WHERE extname = 'vector';` returns `vector` after migrations. Host port `55432` avoids a local PostgreSQL service on `5432`. |
+| Redis/BullMQ | `docker compose exec redis redis-cli ping` | `PONG`; Redis uses AOF persistence, `noeviction`, and host port `56379`. |
 
 Use `npm run db:up`, `npm run db:down`, and `npm run db:logs` to manage the local database.
 

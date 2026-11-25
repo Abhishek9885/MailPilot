@@ -29,6 +29,8 @@ import {
 import type { GmailTokenProvider } from "./token-provider.js";
 
 const DEFAULT_GMAIL_BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/me";
+const MAX_GMAIL_RESPONSE_BYTES = 8 * 1024 * 1024;
+const MAX_GMAIL_ERROR_RESPONSE_BYTES = 64 * 1024;
 
 export interface GmailClientOptions {
   tokenProvider: GmailTokenProvider;
@@ -36,6 +38,7 @@ export interface GmailClientOptions {
   maxRetries?: number | undefined;
   initialDelayMs?: number | undefined;
   maxDelayMs?: number | undefined;
+  requestTimeoutMs?: number | undefined;
   backoffMultiplier?: number | undefined;
   fetch?: typeof fetch | undefined;
   sleep?: ((ms: number) => Promise<void>) | undefined;
@@ -48,6 +51,7 @@ export class GmailClient {
   private readonly maxRetries: number;
   private readonly initialDelayMs: number;
   private readonly maxDelayMs: number;
+  private readonly requestTimeoutMs: number;
   private readonly backoffMultiplier: number;
   private readonly fetchFn: typeof fetch;
   private readonly sleepFn: (ms: number) => Promise<void>;
@@ -59,6 +63,7 @@ export class GmailClient {
     this.maxRetries = options.maxRetries ?? 3;
     this.initialDelayMs = options.initialDelayMs ?? 500;
     this.maxDelayMs = options.maxDelayMs ?? 10_000;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
     this.backoffMultiplier = options.backoffMultiplier ?? 2;
     this.fetchFn = options.fetch ?? fetch;
     this.sleepFn = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -191,12 +196,16 @@ export class GmailClient {
       headers.set("Accept", "application/json");
 
       try {
-        const response = await this.fetchFn(url, { ...init, headers });
+        const response = await this.fetchFn(url, {
+          ...init,
+          headers,
+          signal: init.signal ?? AbortSignal.timeout(this.requestTimeoutMs)
+        });
 
         if (response.ok) {
           let body: unknown;
           try {
-            body = await response.json();
+            body = await readBoundedJson(response, MAX_GMAIL_RESPONSE_BYTES);
           } catch (error: unknown) {
             if (isTransientGmailError(error)) throw error;
             throw invalidGmailResponseError(safeEndpoint, init.method ?? "GET");
@@ -232,7 +241,7 @@ export class GmailClient {
 
         // Check if rate limited
         const is429 = response.status === 429;
-        const responseText = await response.text().catch(() => "");
+        const responseText = await readBoundedText(response, MAX_GMAIL_ERROR_RESPONSE_BYTES).catch(() => "");
         const isRateLimit403 = response.status === 403 && (
           responseText.includes("rateLimitExceeded") ||
           responseText.includes("userRateLimitExceeded")
@@ -325,6 +334,65 @@ export class GmailClient {
     const jitter = Math.random() * 50;
     return Math.min(this.maxDelayMs, Math.round(exponential + jitter));
   }
+}
+
+async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown> {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("Gmail response exceeded the configured size limit");
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Gmail response body is unavailable");
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("Gmail response exceeded the configured size limit");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const text = new TextDecoder().decode(Buffer.concat(chunks, totalBytes));
+  return JSON.parse(text) as unknown;
+}
+
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error("Gmail error response exceeded the configured size limit");
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error("Gmail error response exceeded the configured size limit");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  return new TextDecoder().decode(Buffer.concat(chunks, totalBytes));
 }
 
 function normalizeEndpointForDiagnostics(endpoint: string): string {

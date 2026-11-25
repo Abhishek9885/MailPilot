@@ -55,7 +55,7 @@ export function isTransientGmailError(error: unknown): boolean {
 
   if (typeof error === "object" && error !== null) {
     // Network failures / fetch timeouts
-    if ("name" in error && (error.name === "TypeError" || error.name === "AbortError" || error.name === "FetchError")) {
+    if ("name" in error && (error.name === "TypeError" || error.name === "AbortError" || error.name === "TimeoutError" || error.name === "FetchError")) {
       return true;
     }
     if ("code" in error) {

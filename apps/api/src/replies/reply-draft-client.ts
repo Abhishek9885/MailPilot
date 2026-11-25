@@ -7,7 +7,7 @@ import {
 import { ApiError } from "../errors.js";
 
 export interface ReplyDraftClient {
-  draft(input: ReplyDraftServiceRequest): Promise<ReplyDraftServiceResponse>;
+  draft(input: ReplyDraftServiceRequest, requestId?: string): Promise<ReplyDraftServiceResponse>;
 }
 
 export class FastApiReplyDraftClient implements ReplyDraftClient {
@@ -18,9 +18,9 @@ export class FastApiReplyDraftClient implements ReplyDraftClient {
     private readonly fetcher: typeof fetch = fetch
   ) {}
 
-  public async draft(input: ReplyDraftServiceRequest): Promise<ReplyDraftServiceResponse> {
+  public async draft(input: ReplyDraftServiceRequest, requestId?: string): Promise<ReplyDraftServiceResponse> {
     const path = "/internal/v1/reply-drafts/";
-    const serviceRequestId = randomUUID();
+    const serviceRequestId = requestId ?? randomUUID();
     const serviceTimestamp = Math.floor(Date.now() / 1_000).toString();
     const requestBody = JSON.stringify(input);
     const signatureContent = [serviceTimestamp, "POST", path, serviceRequestId, requestBody].join("\n");

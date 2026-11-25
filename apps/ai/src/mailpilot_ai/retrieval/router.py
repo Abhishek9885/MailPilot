@@ -24,7 +24,7 @@ async def get_embedding_provider() -> AsyncIterator[EmbeddingProvider]:
 def get_vector_store() -> PostgresEmbeddingStore:
     settings = get_settings()
     return PostgresEmbeddingStore(
-        str(settings.database_url),
+        str(settings.database_connection_url),
         model=settings.embedding_model,
         provider=settings.embedding_provider,
         dimensions=settings.embedding_dimensions,

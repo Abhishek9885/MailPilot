@@ -173,9 +173,8 @@ export default function Workspace({ initialView = "dashboard" }: { initialView?:
   };
 
   const countForView = (view: MailView): number | undefined => {
-    if (view === "dashboard" || view === "agent" || view === "activity" || view === "settings") return undefined;
-    if (view === "inbox") return inboxItems.filter((item) => item.unread).length;
-    if (view === "tasks") return MOCK_MAIL.filter((item) => item.view === view && item.status !== "Complete").length;
+    if (view === "dashboard" || view === "inbox" || view === "agent" || view === "activity" || view === "settings") return undefined;
+    if (view === "tasks") return undefined;
     return MOCK_MAIL.filter((item) => item.view === view).length;
   };
 
@@ -305,14 +304,28 @@ export default function Workspace({ initialView = "dashboard" }: { initialView?:
             <div>
               <div className="page-eyebrow">
                 <span aria-hidden="true" className="demo-indicator" />
-                {selectedEmail ? <>Inbox <span className="eyebrow-separator">/</span> Conversation</> : <>Demo workspace <span className="eyebrow-separator">/</span> Sample data</>}
+                {selectedEmail
+                  ? <>Inbox <span className="eyebrow-separator">/</span> Conversation</>
+                  : activeView === "tasks"
+                    ? "Task management"
+                    : activeView === "inbox"
+                    ? "Connected mailbox"
+                    : <>Demo workspace <span className="eyebrow-separator">/</span> Sample data</>}
               </div>
               <h1>{selectedEmail?.subject ?? viewContent.title}</h1>
-              <p>{selectedEmail ? `Conversation with ${selectedEmail.sender} · ${selectedEmail.timeLabel}` : viewContent.description}</p>
+              <p>{selectedEmail
+                ? `Conversation with ${selectedEmail.sender} · ${selectedEmail.timeLabel}`
+                : activeView === "tasks"
+                  ? "AI-extracted tasks stay proposed until you review them."
+                  : activeView === "inbox"
+                  ? "Your recent emails synced from Gmail. Sample messages are kept separate."
+                  : viewContent.description}</p>
             </div>
             {selectedEmail ? (
-              <Button onClick={() => setSelectedEmailId(null)} variant="secondary">Back to {activeView === "inbox" ? "inbox" : "messages"}</Button>
-            ) : (
+              <Button onClick={() => setSelectedEmailId(null)} variant="secondary">Back to messages</Button>
+            ) : activeView === "inbox" ? (
+              <Button onClick={() => setView("settings")} variant="secondary">Mailbox settings</Button>
+            ) : activeView === "tasks" ? null : (
               <Button onClick={() => setComposerOpen(true)}>
                 <Icon name="plus" size={18} />
                 Compose
@@ -320,7 +333,7 @@ export default function Workspace({ initialView = "dashboard" }: { initialView?:
             )}
           </div>
 
-          {!selectedEmail && (activeView === "dashboard" || activeView === "inbox") && <p className="mock-data-banner">Sample preview · {summary.total} sample messages · Stored mailbox data stays separate</p>}
+          {!selectedEmail && activeView === "dashboard" && <p className="mock-data-banner">Sample preview · {summary.total} sample messages · Stored mailbox data stays separate</p>}
 
           {selectedEmail ? (
             <EmailDetail item={selectedEmail} key={selectedEmail.id} />
@@ -329,7 +342,7 @@ export default function Workspace({ initialView = "dashboard" }: { initialView?:
           ) : activeView === "approvals" ? (
             <ApprovalsPage />
           ) : activeView === "tasks" ? (
-            <TasksPage onOpenEmail={setSelectedEmailId} />
+            <TasksPage />
           ) : activeView === "activity" ? (
             <ActivityPage onOpenEmail={setSelectedEmailId} />
           ) : activeView === "settings" ? (
@@ -344,20 +357,10 @@ export default function Workspace({ initialView = "dashboard" }: { initialView?:
               summary={summary}
               upcomingTasks={upcomingTasks}
             />
+          ) : activeView === "inbox" ? (
+            <SyncedEmailAnalysis searchQuery={search} onClearSearch={() => setSearch("")} />
           ) : (
             <>
-              {activeView === "inbox" && (
-                <>
-                  <SyncedEmailAnalysis />
-                  <div className="stats-grid stats-grid--inbox">
-                    <Card className="inbox-count-card"><span>Sample inbox messages</span><strong>{summary.total}</strong></Card>
-                    <Card className="inbox-count-card"><span>Unread</span><strong>{summary.unread}</strong></Card>
-                    <Card className="inbox-count-card"><span>High priority</span><strong>{summary.highPriority}</strong></Card>
-                    <Card className="inbox-count-card"><span>Needs reply</span><strong>{summary.needsReply}</strong></Card>
-                  </div>
-                </>
-              )}
-
               <Card aria-labelledby="mail-list-title" className="mail-card inbox-card">
                 <div className="mail-card__header">
                   <div>
@@ -365,7 +368,7 @@ export default function Workspace({ initialView = "dashboard" }: { initialView?:
                       <h2 id="mail-list-title">{viewContent.title}</h2>
                       <Badge tone="neutral">{filteredItems.length}</Badge>
                     </div>
-                    <p>{activeView === "inbox" ? "Sender, subject, priority, status, and received time at a glance." : `Sample ${viewContent.title.toLowerCase()} for this demo workspace.`}</p>
+                    <p>{`Sample ${viewContent.title.toLowerCase()} for this demo workspace.`}</p>
                   </div>
                   <Button
                     aria-label="Refresh sample messages"
@@ -465,7 +468,7 @@ export default function Workspace({ initialView = "dashboard" }: { initialView?:
             </>
           )}
 
-          <footer className="app-footer"><span>MailPilot AI</span><span>Preview workspace · No mail service connected</span></footer>
+          <footer className="app-footer"><span>MailPilot AI</span><span>{activeView === "inbox" ? "Connected mailbox · Sample data remains separate" : "Preview workspace · Sample data only"}</span></footer>
         </main>
       </div>
 

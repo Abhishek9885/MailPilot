@@ -1,0 +1,229 @@
+databases:
+  - name: mailpilot-postgres
+    databaseName: mailpilot
+    user: mailpilot_owner
+    plan: 0.5c-1g
+    diskSizeGB: 15
+    region: singapore
+    postgresMajorVersion: "17"
+    ipAllowList: []
+
+services:
+  - type: web
+    name: mailpilot-web
+    runtime: node
+    plan: 0.5c-512mb
+    region: singapore
+    autoDeployTrigger: off
+    buildCommand: >-
+      npm ci --include=dev &&
+      DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build?schema=app
+      NEXT_PUBLIC_API_BASE_URL=https://mailpilot-web.onrender.com
+      npm run build --workspace @mailpilot/web &&
+      npm prune --omit=dev &&
+      node scripts/prepare-render-node-runtime.mjs
+    startCommand: npm run start --workspace @mailpilot/web
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_BASE_URL
+        value: https://mailpilot-web.onrender.com
+      - key: API_INTERNAL_HOSTPORT
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          property: hostport
+
+  - type: pserv
+    name: mailpilot-api
+    runtime: node
+    plan: 0.5c-512mb
+    region: singapore
+    autoDeployTrigger: off
+    buildCommand: >-
+      unset DATABASE_URL REDIS_URL AI_SERVICE_TOKEN SESSION_SECRET GMAIL_TOKEN_ENCRYPTION_KEY
+      GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY GOOGLE_OIDC_CLIENT_ID GOOGLE_OIDC_CLIENT_SECRET
+      GOOGLE_GMAIL_OAUTH_CLIENT_ID GOOGLE_CALENDAR_OAUTH_CLIENT_ID
+      GOOGLE_GMAIL_OAUTH_CLIENT_SECRET GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET &&
+      npm ci --include=dev &&
+      DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build?schema=app
+      npm run build --workspace @mailpilot/api &&
+      npm prune --omit=dev &&
+      node scripts/prepare-render-node-runtime.mjs
+    startCommand: npm run start --workspace @mailpilot/api
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PORT
+        value: "10000"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: WEB_ORIGIN
+        value: https://mailpilot-web.onrender.com
+      - key: API_PUBLIC_ORIGIN
+        value: https://mailpilot-web.onrender.com
+      - key: AI_SERVICE_URL
+        value: https://mailpilot-ai.onrender.com
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: AI_SERVICE_TOKEN
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: GMAIL_TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      - key: GOOGLE_OIDC_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OIDC_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_GMAIL_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_GMAIL_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALENDAR_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALENDAR_EVENTS_ENABLED
+        value: "false"
+
+  - type: web
+    name: mailpilot-ai
+    runtime: python
+    rootDir: apps/ai
+    plan: 1c-2g
+    region: singapore
+    autoDeployTrigger: off
+    buildCommand: >-
+      unset AI_DATABASE_URL AI_SERVICE_TOKEN OPENAI_API_KEY &&
+      uv sync --locked --no-dev &&
+      rm -rf tests scripts eval
+    startCommand: uv run --project . python -m mailpilot_ai
+    healthCheckPath: /health/live
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: UV_VERSION
+        value: "0.12.18"
+      - key: AI_HOST
+        value: 0.0.0.0
+      - key: AI_PORT
+        value: "10000"
+      - key: AI_SERVICE_TOKEN
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: AI_SERVICE_TOKEN
+      - key: AI_DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+
+  - type: worker
+    name: mailpilot-worker
+    runtime: node
+    plan: 0.5c-512mb
+    region: singapore
+    autoDeployTrigger: off
+    buildCommand: >-
+      unset DATABASE_URL REDIS_URL AI_SERVICE_TOKEN SESSION_SECRET GMAIL_TOKEN_ENCRYPTION_KEY
+      GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY GOOGLE_OIDC_CLIENT_ID GOOGLE_OIDC_CLIENT_SECRET
+      GOOGLE_GMAIL_OAUTH_CLIENT_ID GOOGLE_CALENDAR_OAUTH_CLIENT_ID
+      GOOGLE_GMAIL_OAUTH_CLIENT_SECRET GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET &&
+      npm ci --include=dev &&
+      DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build?schema=app
+      npm run build --workspace @mailpilot/api &&
+      npm prune --omit=dev &&
+      node scripts/prepare-render-node-runtime.mjs
+    startCommand: npm run start:worker --workspace @mailpilot/api
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PORT
+        value: "10000"
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: WEB_ORIGIN
+        value: https://mailpilot-web.onrender.com
+      - key: API_PUBLIC_ORIGIN
+        value: https://mailpilot-web.onrender.com
+      - key: AI_SERVICE_URL
+        value: https://mailpilot-ai.onrender.com
+      - key: DATABASE_URL
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: DATABASE_URL
+      - key: REDIS_URL
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: REDIS_URL
+      - key: AI_SERVICE_TOKEN
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: AI_SERVICE_TOKEN
+      - key: SESSION_SECRET
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: SESSION_SECRET
+      - key: GMAIL_TOKEN_ENCRYPTION_KEY
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: GMAIL_TOKEN_ENCRYPTION_KEY
+      - key: GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: GOOGLE_CALENDAR_TOKEN_ENCRYPTION_KEY
+      - key: GOOGLE_OIDC_CLIENT_ID
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: GOOGLE_OIDC_CLIENT_ID
+      - key: GOOGLE_OIDC_CLIENT_SECRET
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: GOOGLE_OIDC_CLIENT_SECRET
+      - key: GOOGLE_GMAIL_OAUTH_CLIENT_ID
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: GOOGLE_GMAIL_OAUTH_CLIENT_ID
+      - key: GOOGLE_GMAIL_OAUTH_CLIENT_SECRET
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: GOOGLE_GMAIL_OAUTH_CLIENT_SECRET
+      - key: GOOGLE_CALENDAR_OAUTH_CLIENT_ID
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: GOOGLE_CALENDAR_OAUTH_CLIENT_ID
+      - key: GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET
+        fromService:
+          name: mailpilot-api
+          type: pserv
+          envVarKey: GOOGLE_CALENDAR_OAUTH_CLIENT_SECRET
+      - key: GOOGLE_CALENDAR_EVENTS_ENABLED
+        value: "false"
+
+  - type: keyvalue
+    name: mailpilot-redis
+    plan: 1g
+    region: singapore
+    maxmemoryPolicy: noeviction
+    persistenceMode: journal-snapshot
+    ipAllowList: []

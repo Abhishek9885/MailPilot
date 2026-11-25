@@ -206,3 +206,51 @@ The implementation and optional PostgreSQL restart test are described in [agent-
 - Email-body redaction, quoted-history/signature handling, taxonomy, priority policy, and timezone rules.
 - Evaluation dataset consent process, sample size, quality thresholds, latency and cost SLOs.
 - Production cloud/region, database sizing/index strategy, key rotation, audit retention, and triggers for Redis/BullMQ or Gmail push.
+
+## Phase 12.1 — User memory design (complete; design only)
+
+The memory model and data boundaries are specified in [memory-design.md](memory-design.md). It defines opt-in and per-item approval; explicit preferences, recurring commitments, and non-sensitive relevant facts; owner-scoped provenance, confidence, timestamps, and expiry; correction and deletion; source-email invalidation; and the distinction between approved memory, temporary run state, and retrieved email evidence.
+
+No schema, endpoint, index, prompt behavior, or automatic extraction is implemented by this phase. Implementation requires a separate scoped phase with owner-isolation, consent, sensitive-trait rejection, expiry, source-deletion, and checkpoint non-persistence tests.
+
+## Phase 12.2 — Memory retrieval and management (implemented)
+
+Prisma and Express now provide owner-scoped memory settings, explicit save/correction, source provenance, conflict responses, confirmation/expiry, deletion, and a 10-item/2,000-character lexical retrieval preview. Settings UI lets the user inspect and manage saved items, pause retrieval, or turn the feature off and delete all items. Email content cannot silently create or replace memory. Retrieval is not yet connected to model context or persisted graph state; tests and future orchestration integration remain follow-up work.
+
+## Phase 12.3 — Background jobs (implemented)
+
+Node now uses Redis and BullMQ for Gmail sync jobs. PostgreSQL stores sync progress and a transactional identifier-only outbox; the separate worker relays outbox rows, processes checkpointed batches with bounded retries, and records safe dead-letter outcomes. API readiness checks the worker heartbeat. FastAPI remains behind the signed HTTP service boundary and does not depend on Node queue internals. See [background job operations](background-jobs.md).
+
+## Phase 12.4 - Proactive follow-ups (implemented)
+
+Users can opt in to in-app reminders for reviewed active commitments and stale inbound email threads. Settings include reminder lead time, stale age, timezone, optional quiet hours, per-day suggestion limit, and independent suggestion toggles. A separate BullMQ scan queue runs about every 15 minutes, with bounded retries and stable per-user/window job IDs. Suggestions keep owner-scoped source message/thread references, deduplicate by commitment due revision or latest thread message, and are cancelled when their evidence is no longer current. Users can complete, dismiss, or snooze a suggestion. This phase sends no email and performs no external action. See [proactive follow-ups](proactive-followups.md).
+
+## Phase 13.1 - Observability (implemented)
+
+Express and FastAPI emit structured JSON request events with propagated request IDs and latency. AI logs include per-node LangGraph timings, read-only tool outcomes, provider/model timing, token counts, and estimated costs only when configured provider usage and rate data exist. Sensitive fields are redacted by default; prompts, email bodies, evidence, model outputs, tokens, and raw provider errors are not recorded. No external tracing service is enabled. See [observability operations](observability.md) for event fields, limitations, and sink retention/access requirements.
+
+## Phase 13.2 - AI evaluation suite (implemented)
+
+The offline suite scores versioned, synthetic or appropriately consented output snapshots for summaries, structured extraction, classification, retrieval, citations, faithfulness, abstention, tool selection, and graph workflow success. It includes prompt-injection, no-answer, cross-user, ambiguity, exact-ID/date, and no-side-effect cases; it also invokes the existing local RAG replay and held-out classifier evaluator. Reports carry dataset checksum, model/prompt versions, latency, token use, and configured-cost estimates when supplied. The suite makes no external provider/database calls and the checked-in prediction set is only a metric fixture, not a model-quality claim. See [the AI evaluation suite guide](ai-evaluation-suite.md).
+
+## Phase 13.3 — Threat-model security audit (implemented)
+
+The source-level audit fixed OAuth callback session binding, production Calendar token-key validation, the API logger's invalid service-signature redaction path, missing API request limits, and unbounded Gmail provider response reads. Regression tests cover those issues. Prompt injection, tenant scoping, MIME/HTML handling, tool validation, approval replay/idempotency, logging, and network-fetch boundaries were reviewed; residual risks and unverified areas are listed in [the security audit](security-audit.md). The Next.js security update is now applied and audited; the recorded audit is not an independent penetration test or a production infrastructure review.
+
+## Phase 13.4 — Reliability and release gates (in progress)
+
+Measurable security, quality, reliability, latency, migration, and release checklist criteria are documented in [release gates](release-gates.md). The local Vitest/pytest suites cover authentication, Gmail sync, RAG/LangGraph, approval, tasks, and Calendar using in-memory stores and provider fakes. PostgreSQL migration/integration and database-backed checkpointer recovery require the isolated database environment; they remain pending when Docker is unavailable. The release record must contain actual command results and every skip before deployment. No deployment is authorized or performed by this phase.
+
+## Phase 14.1 — Deployment architecture (documented)
+
+The initial hosting decision is Render in one Singapore region, with a public same-origin Next.js entrypoint, private Express API, HMAC-protected HTTPS FastAPI service, Node background worker, managed PostgreSQL with pgvector, and managed Redis-compatible Key Value. The architecture note includes the service diagram, cost estimate, environment/secrets boundaries, TLS and private networking, OAuth redirects, migrations, backups, and operator recovery runbook. See [deployment architecture](deployment-architecture.md).
+
+This phase documents the hosting decision; no hosting resources were created and no deployment occurred.
+
+## Phase 14.2 — CI/CD and production configuration (implemented; operator setup required)
+
+GitHub Actions installs pinned Node/Python tooling, starts isolated PostgreSQL with pgvector, and runs lint, typecheck, all tests (including database-backed cases), dependency audit, Prisma validation, and service builds without production credentials. The Render Blueprint defines the web, private API, AI, worker, PostgreSQL, and Redis-compatible services. Main-branch deployment waits for CI and a protected GitHub `production` environment, deploys one commit in dependency order, and checks readiness. The same-origin API rewrite and network-bind settings are configured for hosted services. Production secrets, least-privilege runtime database roles, restricted migration access, and a manual migration gate are documented in [the CI/CD production runbook](ci-cd-production.md). Complete provider setup and staging/restore exercises there before enabling production users.
+
+## Phase 14.3 — Production deployment (blocked; no deployment made)
+
+Local release checks pass, but the required PostgreSQL integration cases and real Google/provider smoke tests could not run. No Render resources were created and no migrations or external actions were run. Render account/API access, production secret setup, a pushed green commit, database roles, and a dedicated Gmail test account are still required. See the [deployment record](production-deployment-record.md) for verified results and remaining steps.

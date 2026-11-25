@@ -93,6 +93,7 @@ def _test_pool(database_url: str) -> AsyncConnectionPool:
             "autocommit": True,
             "row_factory": dict_row,
             "options": "-c search_path=ai,public",
+            "connect_timeout": 5,
         },
         open=False,
     )

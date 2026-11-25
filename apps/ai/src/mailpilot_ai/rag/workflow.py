@@ -359,7 +359,7 @@ def _return_response(state: RAGWorkflowState) -> RAGWorkflowOutput:
 
 
 def build_read_only_rag_graph(
-    *, checkpointer: BaseCheckpointSaver | None = None
+    *, checkpointer: BaseCheckpointSaver[str] | None = None
 ) -> CompiledStateGraph[
     RAGWorkflowState,
     RAGWorkflowContext,

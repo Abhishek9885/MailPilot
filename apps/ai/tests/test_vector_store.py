@@ -92,25 +92,38 @@ async def _create_source_chunk(
         connection.cursor() as cursor,
     ):
         await cursor.execute(
-            "INSERT INTO app.users (id, email_normalized) VALUES (%s, %s)",
+            """
+                INSERT INTO app.users (id, email_normalized, updated_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO NOTHING
+                """,
             (owner_id, f"{owner_id}@example.test"),
         )
         await cursor.execute(
-            """
-                INSERT INTO app.google_connections (
-                    id, user_id, provider_subject, provider_email_normalized
-                ) VALUES (%s, %s, %s, %s)
-                """,
-            (connection_id, owner_id, f"subject-{connection_id}", f"{owner_id}@example.test"),
+            "SELECT id FROM app.google_connections WHERE user_id = %s",
+            (owner_id,),
         )
+        existing_connection = await cursor.fetchone()
+        if existing_connection is not None:
+            connection_id = existing_connection[0]
+        else:
+            await cursor.execute(
+                """
+                    INSERT INTO app.google_connections (
+                        id, user_id, provider_subject, provider_email_normalized, updated_at
+                    ) VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    """,
+                (connection_id, owner_id, f"subject-{connection_id}", f"{owner_id}@example.test"),
+            )
         await cursor.execute(
             """
                 INSERT INTO app.emails (
                     id, user_id, google_connection_id, provider_message_id,
                     provider_thread_id, sender_name, sender_email_normalized,
-                    subject, body_text, body_hash, received_at
+                    subject, body_text, body_hash, received_at, updated_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 """,
             (

@@ -1,4 +1,10 @@
+import asyncio
 import os
+import sys
+
+if sys.platform == "win32":
+    # Psycopg's async API requires a selector-based event loop on Windows.
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 os.environ.setdefault(
     "DATABASE_URL",

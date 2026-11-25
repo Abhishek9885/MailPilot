@@ -1,14 +1,15 @@
 "use client";
 
-import { useMemo, useReducer, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { TextField, SelectField } from "@/components/ui/field";
 import { Icon } from "@/components/ui/icon";
-import { approvalReducer, type ApprovalDecision } from "@/lib/approval-state";
-import { MOCK_MAIL, PRIORITY_TONES } from "@/lib/mock-mail";
-import { filterTasks, type TaskFilter } from "@/lib/workspace-page-utils";
+import { GmailConnectionPanel } from "@/components/gmail-connection-panel";
+import { CalendarConnectionPanel } from "@/components/calendar-connection-panel";
+import { MemoryManagementPanel } from "@/components/memory-management-panel";
+import { MOCK_MAIL } from "@/lib/mock-mail";
 
 export function AgentPage({ onViewApprovals, onViewTasks }: { onViewApprovals: () => void; onViewTasks: () => void }) {
   const suggestions = [
@@ -62,118 +63,9 @@ export function AgentPage({ onViewApprovals, onViewTasks }: { onViewApprovals: (
   );
 }
 
-const approvalReplies: Record<string, string> = {
-  "approval-1": "Hi Jordan, Thursday, October 29 works for the customer announcement. I’ll confirm the final timing with the team.",
-  "approval-2": "Hi Priya, thanks for the updated language. I’ve reviewed the revised agreement and it looks ready for the next review step.",
-  "approval-3": "Hi Elena, thanks for sending the revised estimate. I’ll review the delivery details and follow up with any questions."
-};
+export { PersistedApprovalsPage as ApprovalsPage } from "@/components/persisted-approvals";
 
-export function ApprovalsPage() {
-  const [decisions, dispatch] = useReducer(approvalReducer, {});
-  const [announcement, setAnnouncement] = useState("");
-  const approvals = MOCK_MAIL.filter((item) => item.view === "approvals");
-  const pendingCount = approvals.filter((item) => !decisions[item.id]).length;
-
-  const decide = (id: string, decision: ApprovalDecision) => {
-    dispatch({ type: "decide", id, decision });
-    setAnnouncement(decision === "approved" ? "Suggestion approved in this preview. No email was sent." : "Suggestion rejected in this preview. No email was sent.");
-  };
-
-  return (
-    <div className="page-content-stack">
-      <div aria-live="polite" className="visually-hidden">{announcement}</div>
-      <div className="agent-status-banner approvals-preview-banner">
-        <span aria-hidden="true" className="agent-status-banner__icon"><Icon name="approvals" size={18} /></span>
-        <div><strong>Review before anything happens</strong><span>Approve or reject only changes this local preview. It does not send a message.</span></div>
-        <Badge tone="amber">{pendingCount} pending</Badge>
-      </div>
-
-      {approvals.length === 0 ? (
-        <Card className="empty-work-page"><h2>Nothing needs your approval</h2><p>New suggestions will appear here for your review.</p></Card>
-      ) : (
-        <div aria-label="Reply suggestions awaiting review" className="approval-list">
-          {approvals.map((item) => {
-            const decision = decisions[item.id];
-            return (
-              <Card className="approval-card" key={item.id}>
-                <div className="approval-card__heading">
-                  <span aria-hidden="true" className="approval-card__avatar">{item.initials}</span>
-                  <div><p className="feature-eyebrow">Proposed reply · {item.address}</p><h2>{item.subject}</h2><span>{item.timeLabel}</span></div>
-                  {decision ? <Badge tone={decision === "approved" ? "green" : "neutral"}>{decision === "approved" ? "Approved in preview" : "Rejected in preview"}</Badge> : <Badge tone={PRIORITY_TONES[item.priority]}>Awaiting review</Badge>}
-                </div>
-                <p className="approval-card__context">{item.preview}</p>
-                <div className="approval-draft">
-                  <span>Suggested reply <Badge tone="blue">AI suggestion</Badge></span>
-                  <p>{approvalReplies[item.id] ?? "Thanks for the update. I’ll review this and follow up shortly."}</p>
-                </div>
-                {decision ? (
-                  <p className="approval-card__result" role="status">
-                    {decision === "approved" ? "Approved in this preview. No message was sent." : "Rejected in this preview. No message was sent."}
-                  </p>
-                ) : (
-                  <div className="approval-card__actions">
-                    <Button onClick={() => decide(item.id, "rejected")} variant="secondary">Reject suggestion</Button>
-                    <Button onClick={() => decide(item.id, "approved")}><Icon name="check" size={16} /> Approve in preview</Button>
-                  </div>
-                )}
-              </Card>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const TASK_FILTER_OPTIONS: { key: TaskFilter; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "open", label: "Open" },
-  { key: "Overdue", label: "Overdue" },
-  { key: "Due today", label: "Due today" },
-  { key: "Due tomorrow", label: "Due tomorrow" },
-  { key: "Complete", label: "Complete" }
-];
-
-export function TasksPage({ onOpenEmail }: { onOpenEmail: (id: string) => void }) {
-  const [filter, setFilter] = useState<TaskFilter>("all");
-  const tasks = useMemo(() => MOCK_MAIL.filter((item) => item.view === "tasks"), []);
-  const visibleTasks = useMemo(() => filterTasks(tasks, filter), [filter, tasks]);
-
-  return (
-    <div className="page-content-stack">
-      <Card className="task-board-card">
-        <div className="task-board__header">
-          <div><p className="feature-eyebrow">Follow-up board</p><h2>Tasks from conversations</h2><p>Deadlines and status are sample data. Nothing is scheduled or assigned.</p></div>
-          <Badge tone="neutral">{visibleTasks.length} shown</Badge>
-        </div>
-        <div aria-label="Filter tasks by status" className="task-filters" role="group">
-          {TASK_FILTER_OPTIONS.map((option) => (
-            <button
-              aria-pressed={filter === option.key}
-              className={filter === option.key ? "filter-chip filter-chip--active" : "filter-chip"}
-              key={option.key}
-              onClick={() => setFilter(option.key)}
-              type="button"
-            >{option.label}</button>
-          ))}
-        </div>
-        {visibleTasks.length > 0 ? (
-          <ul className="task-list">
-            {visibleTasks.map((task) => (
-              <li key={task.id}>
-                <span aria-hidden="true" className={`task-list__marker task-list__marker--${task.status === "Overdue" ? "overdue" : task.status === "Complete" ? "complete" : "open"}`}><Icon name={task.status === "Complete" ? "check" : "clock"} size={16} /></span>
-                <div className="task-list__main"><div className="task-list__title"><h3>{task.subject}</h3><Badge tone={task.statusTone}>{task.status}</Badge></div><p>{task.preview}</p><span>{task.sender} · {task.category}</span></div>
-                <div className="task-list__side"><time dateTime={task.dateTime}>{task.timeLabel}</time><Button onClick={() => onOpenEmail(task.id)} size="sm" variant="ghost">View source</Button></div>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <div className="task-empty" role="status"><span>No tasks match this filter.</span><Button onClick={() => setFilter("all")} variant="secondary">Show all tasks</Button></div>
-        )}
-      </Card>
-    </div>
-  );
-}
+export { TasksPage } from "@/components/task-management";
 
 interface ActivityEntry {
   id: string;
@@ -241,7 +133,9 @@ export function SettingsPage() {
           </div>
         </form>
       </Card>
-      <Card className="settings-note-card"><span aria-hidden="true"><Icon name="approvals" size={18} /></span><div><h2>Connected services</h2><p>No email account or AI provider is connected. Saving these preview settings does not change external services.</p><Badge tone="neutral">Local preview</Badge></div></Card>
+      <GmailConnectionPanel />
+      <CalendarConnectionPanel />
+      <MemoryManagementPanel />
     </div>
   );
 }

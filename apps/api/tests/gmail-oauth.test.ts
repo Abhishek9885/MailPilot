@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import pino from "pino";
 import request from "supertest";
 import { createApp } from "../src/app.js";
+import type { GmailSyncService } from "../src/gmail/sync-service.js";
 import { hashSecret } from "../src/auth/cookies.js";
 import type {
   AuthStore,
@@ -152,6 +153,7 @@ class MemoryGmailConnectionStore implements GmailConnectionStore {
 class FakeGoogleGmailOAuthClient implements GmailOAuthClient {
   public lastAuthorization: (GmailOAuthChecks & { redirectUri: string; scope: string }) | undefined;
   public lastChecks: GmailOAuthChecks | undefined;
+  public exchangeCount = 0;
   public revokedTokens: string[] = [];
   public exchangeResult: GmailTokenExchange = {
     subject: "gmail-google-subject-1",
@@ -176,6 +178,7 @@ class FakeGoogleGmailOAuthClient implements GmailOAuthClient {
 
   public async exchangeAuthorizationCode(_callbackUrl: URL, checks: GmailOAuthChecks): Promise<GmailTokenExchange> {
     this.lastChecks = checks;
+    this.exchangeCount += 1;
     return this.exchangeResult;
   }
 
@@ -199,6 +202,9 @@ function createTestApp(
     oidcClient: new FakeGoogleOidcClient(),
     gmailStore,
     gmailOAuthClient,
+    gmailSyncService: {
+      async cancelActiveForConnection() {}
+    } as unknown as GmailSyncService,
     logger: pino({ level: "silent" })
   });
   return { app, authStore, gmailStore, gmailOAuthClient };
@@ -310,7 +316,7 @@ describe("Gmail OAuth connection flow", () => {
 
     const callback = await request(app)
       .get(`/v1/oauth/google/callback?code=fake-auth-code&state=${encodeURIComponent(state ?? "")}`)
-      .set("Cookie", oauthCookie);
+      .set("Cookie", `${oauthCookie}; mailpilot_session=${sessionToken}`);
 
     expect(callback.status).toBe(303);
     expect(callback.headers.location).toBe(`${WEB_ORIGIN}/settings?gmail=connected`);
@@ -357,7 +363,7 @@ describe("Gmail OAuth connection flow", () => {
 
     const callback = await request(app)
       .get(`/v1/oauth/google/callback?error=access_denied&state=${encodeURIComponent(state ?? "")}`)
-      .set("Cookie", oauthCookie);
+      .set("Cookie", `${oauthCookie}; mailpilot_session=${sessionToken}`);
 
     expect(callback.status).toBe(303);
     expect(callback.headers.location).toBe(`${WEB_ORIGIN}/settings?error=access_denied`);
@@ -377,7 +383,7 @@ describe("Gmail OAuth connection flow", () => {
 
     const callback = await request(app)
       .get(`/v1/oauth/google/callback?error=server_error&state=${encodeURIComponent(state ?? "")}`)
-      .set("Cookie", oauthCookie);
+      .set("Cookie", `${oauthCookie}; mailpilot_session=${sessionToken}`);
 
     expect(callback.status).toBe(303);
     expect(callback.headers.location).toBe(`${WEB_ORIGIN}/settings?error=oauth_failed`);
@@ -396,6 +402,66 @@ describe("Gmail OAuth connection flow", () => {
       .set("Cookie", "mailpilot_gmail_oauth=tampered.cookie");
     expect(mismatchedState.status).toBe(303);
     expect(mismatchedState.headers.location).toBe(`${WEB_ORIGIN}/settings?error=invalid_state`);
+  });
+
+  it("does not bind a Gmail grant to a different session than the one that started OAuth", async () => {
+    const { app, authStore, gmailStore, gmailOAuthClient } = createTestApp();
+    const ownerToken = "o".repeat(43);
+    const otherToken = "x".repeat(43);
+    authStore.seedSessionForUser(ownerToken, authStore.userId, "owner@gmail.com", "c1", new Date(Date.now() + 60_000));
+    const otherUserId = randomUUID();
+    authStore.seedSessionForUser(otherToken, otherUserId, "other@gmail.com", "c2", new Date(Date.now() + 60_000));
+
+    const start = await request(app)
+      .get("/v1/gmail/connect")
+      .set("Cookie", `mailpilot_session=${ownerToken}`);
+    const oauthCookie = cookiePair(getResponseCookies(start.headers["set-cookie"]), "mailpilot_gmail_oauth");
+    const state = gmailOAuthClient.lastAuthorization?.state;
+
+    const callback = await request(app)
+      .get(`/v1/oauth/google/callback?code=fake-auth-code&state=${encodeURIComponent(state ?? "")}`)
+      .set("Cookie", `${oauthCookie}; mailpilot_session=${otherToken}`);
+
+    expect(callback.headers.location).toBe(`${WEB_ORIGIN}/settings?error=invalid_state`);
+    expect(gmailOAuthClient.exchangeCount).toBe(0);
+    expect(await gmailStore.getConnection(authStore.userId)).toBeNull();
+    expect(await gmailStore.getConnection(otherUserId)).toBeNull();
+  });
+
+  it("rejects unverified Gmail identities and grants missing the read-only scope", async () => {
+    for (const exchangeResult of [
+      {
+        subject: "unverified-subject",
+        email: "unverified@gmail.com",
+        emailVerified: false,
+        refreshToken: "refresh-token",
+        grantedScopes: ["openid", "email", "https://www.googleapis.com/auth/gmail.readonly"]
+      },
+      {
+        subject: "missing-scope-subject",
+        email: "missing-scope@gmail.com",
+        emailVerified: true,
+        refreshToken: "refresh-token",
+        grantedScopes: ["openid", "email"]
+      }
+    ]) {
+      const { app, authStore, gmailStore, gmailOAuthClient } = createTestApp();
+      gmailOAuthClient.exchangeResult = exchangeResult;
+      const sessionToken = "s".repeat(43);
+      authStore.seedSessionForUser(sessionToken, authStore.userId, "user@gmail.com", "csrf", new Date(Date.now() + 60_000));
+      const start = await request(app)
+        .get("/v1/gmail/connect")
+        .set("Cookie", `mailpilot_session=${sessionToken}`);
+      const oauthCookie = cookiePair(getResponseCookies(start.headers["set-cookie"]), "mailpilot_gmail_oauth");
+      const state = gmailOAuthClient.lastAuthorization?.state;
+
+      const callback = await request(app)
+        .get(`/v1/oauth/google/callback?code=fake-auth-code&state=${encodeURIComponent(state ?? "")}`)
+        .set("Cookie", `${oauthCookie}; mailpilot_session=${sessionToken}`);
+
+      expect(callback.status).toBe(303);
+      expect(await gmailStore.getConnection(authStore.userId)).toBeNull();
+    }
   });
 
   it("isolates connection status across different users", async () => {
@@ -467,7 +533,7 @@ describe("Gmail OAuth connection flow", () => {
       .set("Cookie", `mailpilot_session=${sessionToken}; mailpilot_csrf=${csrfToken}`)
       .set("x-csrf-token", csrfToken);
 
-    expect(disconnectResponse.status).toBe(204);
+    expect(disconnectResponse.status, JSON.stringify(disconnectResponse.body)).toBe(204);
     expect(gmailOAuthClient.revokedTokens).toContain("refresh-token-to-revoke");
     expect(gmailStore.refreshTokens.has(authStore.userId)).toBe(false);
 

@@ -1,6 +1,6 @@
 # MailPilot AI API contracts
 
-**Status:** target HTTP/JSON contracts. Express implements liveness/readiness, Google OIDC application sign-in, Gmail OAuth, parsed email storage, bounded Gmail sync, owner-scoped email listing and analysis, and suggestion-only reply drafting. Agent and approval endpoints below remain planned. Publish an OpenAPI document for each HTTP boundary and maintain cross-language JSON fixtures.
+**Status:** target HTTP/JSON contracts. Express implements liveness/readiness, Google OIDC application sign-in, separate Gmail and Calendar OAuth, parsed email storage, background Gmail sync, owner-scoped email listing and analysis, suggestion-only reply drafting, persisted action approvals, task management, approval-gated Calendar event creation, and Phase 12.2 user-memory management. Calendar event writes are disabled by default. Publish an OpenAPI document for each HTTP boundary and maintain cross-language JSON fixtures.
 
 ## Contract rules
 
@@ -13,14 +13,22 @@
 
 ## Browser → Express public API
 
-Next.js calls Express for all data and mutations. Deploy the web and API on the same host so the host-only session cookie reaches both. For cookie-authenticated writes, require the CSRF cookie/header pair and validate Origin. App sign-in uses a separate Google OIDC client requesting only `openid email`; it does not grant Gmail access. Gmail OAuth client configuration and scopes remain separate. OAuth tokens never appear in responses.
+Next.js calls Express for all data and mutations. Deploy the web and API on the same host so the host-only session cookie reaches both. For cookie-authenticated writes, require the CSRF cookie/header pair and validate Origin. App sign-in uses a separate Google OIDC client requesting only `openid email`; it does not grant Gmail or Calendar access. Gmail and Calendar OAuth clients, credentials, and scopes remain separate. OAuth tokens never appear in responses.
 
-The production session cookie is `__Host-mailpilot_session; Path=/; Secure; HttpOnly; SameSite=Lax`, with an eight-hour absolute expiry and no `Domain` attribute. Development uses `mailpilot_session` without `Secure` on localhost. `__Host-mailpilot_csrf` is readable by the web client, `Secure`, `SameSite=Strict`, and stored in the session row as a hash. Sign-out and future cookie-authenticated writes require the matching `x-csrf-token` header and the configured web Origin.
+The production session cookie is `__Host-mailpilot_session; Path=/; Secure; HttpOnly; SameSite=Lax`, with an eight-hour absolute expiry and no `Domain` attribute. Development uses `mailpilot_session` without `Secure` on localhost. `__Host-mailpilot_csrf` is readable by the web client, `Secure`, `SameSite=Strict`, and stored in the session row as a hash. Sign-out and cookie-authenticated writes require the matching `x-csrf-token` header and the configured web Origin.
 
-Every current `/v1` route other than the explicit Google OIDC start/callback flow requires a validated application session; the session lookup and sign-out handlers also require that session. `userId` comes from that session, never from a request field or header. The email-analysis route scopes email reads and analysis writes by both record ID and `authContext.userId`. Database foreign keys enforce same-owner relationships between records but do not authorize reads. `AuditActorType.administrator` is an audit label, not an application role.
+Every current `/v1` route other than the explicit Google OIDC and Calendar OAuth callback flows requires a validated application session. The Calendar callback instead requires the one-time transaction cookie and matching state tied to the session that began authorization. `userId` comes from the validated session or that server-signed callback transaction, never from a request field or header. The email-analysis route scopes email reads and analysis writes by both record ID and `authContext.userId`. Database foreign keys enforce same-owner relationships between records but do not authorize reads. `AuditActorType.administrator` is an audit label, not an application role.
 
 | Method and path | Purpose | Important contract |
 |---|---|---|
+| `GET /v1/memories/settings` | Read memory mode and consent version/time | Defaults to `disabled`; user identity comes only from the authenticated session. |
+| `PATCH /v1/memories/settings` | Enable, pause, or turn off memory | Enabling requires `consentVersion: "memory-v1"`; pausing keeps saved items until expiry; `disabled` deletes all saved memories and clears consent. Requires CSRF. |
+| `GET /v1/memories` | Inspect saved items | Returns up to 50 owner-scoped items, provenance, status, revision, and expiry. Expiry and stale-source status are refreshed on access. |
+| `POST /v1/memories` | Explicitly save one memory | Accepts bounded typed value, optional recurrence, and optional same-owner email source. The action is per-item approval; no model or email process can invoke it on the user's behalf. Requires CSRF. |
+| `PATCH /v1/memories/{memoryId}` | Correct one memory | Requires `expectedRevision`; correction replaces the current text. A `(type,key)` conflict returns `MEMORY_CONFLICT` and never overwrites another item. Requires CSRF. |
+| `POST /v1/memories/{memoryId}/confirm` | Reconfirm expiry | A stale email source cannot be reconfirmed; it must be reviewed and saved against current provenance. Requires CSRF. |
+| `DELETE /v1/memories/{memoryId}` | Delete one memory | Missing and foreign IDs return the same not-found response. Requires CSRF. |
+| `POST /v1/memories/retrieve` | Preview relevant saved memories | Requires enabled mode; returns at most 10 items and 2,000 characters after owner filtering, with provenance and a deterministic lexical-overlap score. Requires CSRF. No AI provider or graph workflow consumes this endpoint yet. |
 | `GET /v1/auth/google/start?returnTo=` | Start application sign-in | Express redirects to Google using `openid email`, random state/nonce, and S256 PKCE. `returnTo` is limited to known web routes. |
 | `GET /v1/auth/google/callback` | Complete application sign-in | Validates the one-time browser-bound transaction and ID token, creates a database session, sets session/CSRF cookies, and redirects to the allowlisted page. |
 | `GET /v1/auth/session` | Check the current application session | Returns `{ "user": { "id": "...", "email": "..." } }`; rejects expired, revoked, or disabled-user sessions. Response is `no-store`. |
@@ -30,9 +38,13 @@ Every current `/v1` route other than the explicit Google OIDC start/callback flo
 | `GET /v1/oauth/google/callback` | OAuth callback | Browser redirect endpoint only; validates state and code, exchanges server-side, redirects to an allowlisted UI path. Never log query parameters. |
 | `GET /v1/gmail/connection` | Connection and scope status | Returns granted scope names, connection state, last sync time, and `reauthRequired`; no tokens. |
 | `DELETE /v1/gmail/connection` | Disconnect Gmail | Requests cancellation of active sync work, attempts to revoke consent, and removes credentials. MailPilot-held data is retained until deleted separately. |
+| `GET /v1/calendar/connect` | Start separate Calendar authorization | Requires an application session and redirects through a session-bound OAuth transaction. |
+| `GET /v1/oauth/google-calendar/callback` | Complete Calendar authorization | Validates the one-time transaction, exchanges the code server-side, and stores encrypted credentials for the transaction owner. |
+| `GET /v1/calendar/connection` | Read Calendar connection and write-feature status | Owner-scoped; returns granted scopes, connection/reauthorization state, and whether event creation is enabled. Never returns tokens. |
+| `DELETE /v1/calendar/connection` | Disconnect Calendar | Requires CSRF validation. Attempts token revocation and clears the owner’s stored credential; existing Google events remain unchanged. |
 | `DELETE /v1/gmail/data` | Delete MailPilot’s copy of Gmail data | Stops sync first and asynchronously deletes mailbox, AI index, extraction, run, and checkpoint data; returns a deletion job/status. It does not delete mail from Gmail. |
 | `POST /v1/syncs` | Start a bounded sync | Body: `{ "mode": "initial", "maxMessages": 500 }` or `{ "mode": "incremental" }`; requires CSRF protection and returns `202 {sync}`. Initial cap is 500 by default and can be set from 1 to 2,000. |
-| `POST /v1/syncs/{syncId}/step` | Process one bounded sync batch | Requires CSRF protection. Each call processes at most 25 messages and returns the updated progress. Call again while status is `pending` or `partial`; clients may poll between calls. |
+| `GET /v1/syncs/active` | Find the current sync | Owner-scoped active progress, or `{ "sync": null }`. Used to resume polling after reload. |
 | `GET /v1/syncs/{syncId}` | Poll sync | Owner-scoped progress counts, status, completion time, cap state, and safe error code. Gmail cursors, page tokens, and credentials are never returned. |
 | `DELETE /v1/syncs/{syncId}` | Cancel sync | Requires CSRF protection. A running batch finishes its current message before stopping; unprocessed checkpoints remain available for diagnosis. |
 | `GET /v1/emails?limit=20` | List recently synced emails | Returns up to 50 owner-scoped email summaries with no body content. |
@@ -47,13 +59,24 @@ Every current `/v1` route other than the explicit Google OIDC start/callback flo
 | `GET /v1/agent/runs/{runId}` | Read run result | Owner-scoped. Returns status, answer, source references, extraction/task candidates, draft, or pending approval. |
 | `GET /v1/approvals?status=pending` | List pending approvals | Returns exact proposed action snapshot, expiry, version, and associated source thread. |
 | `POST /v1/approvals/{approvalId}/decision` | Approve, reject, or edit then approve | Requires idempotency key and `If-Match` approval version. Approval means only the displayed canonical action. |
-| `GET /v1/tasks?status=&dueBefore=` | Browse extracted task candidates | Account and user filters are server enforced. |
+| `GET /v1/tasks?status=...` | Browse source-linked task proposals (`open`, `completed`, `dismissed`, `superseded`, or `all`) | Owner-scoped; the default filter is `open`. |
+| `PATCH /v1/tasks/{taskId}` | Edit a task title/date, complete it, or dismiss it | Requires CSRF validation and owner-scoped lookup. A date correction is saved as user-authored; completed and dismissed tasks cannot be changed. |
+
+### Persisted action proposals and Calendar execution
+
+`GET /v1/actions/proposals` lists only the authenticated owner’s proposals. `POST /v1/actions/proposals` creates an immutable proposal using an idempotency key and source evidence. The `create_calendar_event` action accepts an exact title, optional location, source email ID, start/end instants, start/end local wall times, and an IANA timezone. Source evidence must belong to the owner and match the current email revision and thread. Calendar proposals may be created directly from reviewed email evidence without an agent run; other action types require their completed owner-scoped run.
+
+`POST /v1/actions/proposals/{proposalId}/approve` and `/reject` require CSRF validation and the displayed snapshot hash. Calendar creation is a separate owner-authenticated, CSRF-protected `POST /v1/actions/proposals/{proposalId}/execute` after approval. `POST /v1/actions/proposals/{proposalId}/reconcile` checks a prior uncertain result. These requests bind to the exact snapshot hash. Before a provider request, the executor checks feature enablement, the owner’s active Calendar connection and scope, source evidence, expiry, and approval state. Google event creation is disabled unless `GOOGLE_CALENDAR_EVENTS_ENABLED=true`.
+
+Calendar requests target the connected account’s primary calendar, do not add attendees, and use `sendUpdates=none`. The server rejects nonexistent or ambiguous local times, known event overlaps, and invalid timezones. A stable provider event ID and private MailPilot verification properties make duplicate submissions idempotent. A timeout or unknown result enters reconciliation and cannot be retried until the outcome is established. Event update and cancellation actions are not supported.
 
 ### Email analysis response
 
-`POST /v1/emails/{emailId}/analysis` returns `{ "analysis": { ... } }` with the stored row ID, source revision, schema version, provider/model version, usage metadata, and validated analysis. The analysis contains one or more categories (`work`, `personal`, `finance`, `travel`, `shopping`, `social`, `newsletter`, `security`, or `other`), a priority (`low`, `normal`, `high`, or `urgent`), a concise summary, action items, deadline candidates, commitments, and event candidates. Calendar dates use ISO `YYYY-MM-DD`; unresolved dates and times are `null`. Evidence is a short quote that must occur in the stored email text or headers. The analysis is cached by owner, email, source revision, and schema version.
+`POST /v1/emails/{emailId}/analysis` returns `{ "analysis": { ... } }` with the stored row ID, source revision, schema version, provider/model version, usage metadata, and validated analysis. The analysis contains one or more categories (`work`, `personal`, `finance`, `travel`, `shopping`, `social`, `newsletter`, `security`, or `other`), a priority (`low`, `normal`, `high`, or `urgent`), a concise summary, action items, deadline candidates, commitments, and event candidates. Calendar dates use ISO `YYYY-MM-DD`; unresolved dates and times are `null`. Each action item labels a due date as `explicit`, `inferred`, or `none`; `none` requires a null date. Evidence is a short quote that must occur in the stored email text or headers. The analysis is cached by owner, email, source revision, and schema version. Saving a new analysis also creates or refreshes source-linked task and commitment candidates in the same PostgreSQL transaction. Candidates start in `pending_review`; matching actor and normalized wording within the owner, Gmail connection, and provider-thread scope deduplicates them. A refresh updates due date and source evidence while preserving open status; it preserves user-edited titles and user-corrected dates. Reanalysis that removes a candidate marks it `superseded`. No calendar event is created.
 
-The Express route reads the email from PostgreSQL and does not accept body text from the caller. Requests require session authentication and CSRF validation. The internal FastAPI call uses a 60-second method/path/request-ID/body-bound HMAC signature; its shared secret is never returned to the browser. A changed email revision during analysis returns `409 EMAIL_CHANGED_DURING_ANALYSIS`; provider failures or invalid output return a safe retryable `502 AI_ANALYSIS_FAILED` without persisting generated text.
+`GET /v1/tasks` returns up to 100 owner-scoped records with source email subject/sender/thread, evidence, due-date origin, and lifecycle timestamps. `status` defaults to `open`. `PATCH /v1/tasks/{taskId}` accepts a title, `dueDate` as `YYYY-MM-DD` or `null`, or a single `status` change to `completed` or `dismissed`. A title edit is preserved against future duplicate extraction. A date correction is marked as user-authored and can be cleared with `null`. Editing a pending-review candidate marks it reviewed and active. The source link opens the associated synced email; neither task changes nor completion create calendar events.
+
+The Express route reads the email from PostgreSQL and does not accept body text from the caller. Requests require session authentication and CSRF validation. The internal FastAPI call uses a 60-second method/path/request-ID/body-bound HMAC signature; its shared secret is never returned to the browser. A changed email revision during analysis returns `409 EMAIL_CHANGED_DURING_ANALYSIS`; unexpected provider failures or invalid output return a safe retryable `502 AI_ANALYSIS_FAILED` without persisting generated text. Missing or mismatched local AI credentials return `503 AI_CONFIGURATION_REQUIRED`; known provider authentication, model/request, rate-limit, timeout, and availability errors return specific safe messages without downstream details.
 
 `GET /v1/emails/{emailId}/analysis` reads a result only for the authenticated owner and current email revision. `POST` without `reanalyze` reuses a completed result; setting `reanalyze` to `true` explicitly runs the model again. Both operations use server-loaded email content and never accept browser-supplied message text.
 
@@ -69,7 +92,7 @@ Initial sync reads the mailbox profile first and saves that `historyId` as its s
 
 Incremental sync uses Gmail `history.list` for added, deleted, and label-changed messages. If a message disappears before its full message fetch, MailPilot records a local tombstone. Label changes are reflected by fetching and upserting the current Gmail message. Gmail can expire old history IDs; a 404 during history retrieval produces `resync_required` and leaves the saved cursor unchanged. To recover, start a new bounded initial sync, choosing a larger `maxMessages` if older mail should be included. Upserts deduplicate existing messages and preserve prior data outside the scanned range. Repeat incremental sync after the initial sync completes to apply changes that happened during the bounded scan.
 
-The Gmail consent scope remains `gmail.readonly`; sync does not create, send, modify, or delete Gmail messages. These endpoints run work in bounded request-driven batches and do not require Gmail push, Redis, or a background worker.
+The Gmail consent scope remains `gmail.readonly`; sync does not create, send, modify, or delete Gmail messages. `POST` atomically persists the run and its identifier-only outbox event, then returns `202`; the Node worker owns execution and resumes from PostgreSQL checkpoints. The browser only polls progress and can request cancellation. Sync has bounded BullMQ retries with exponential backoff and jitter; exhausted deliveries record a safe error and mark the outbox row `dead_letter`. See [background job operations](background-jobs.md). FastAPI operations continue to use the authenticated Express-to-AI HTTP interface; Python does not consume Node queues.
 
 ### Create agent run
 
@@ -123,6 +146,7 @@ FastAPI uses a separate internal OpenAPI document and verifies each signed servi
 | Method and path | Purpose |
 |---|---|
 | `POST /internal/v1/email-analysis/` | Analyze one owner-scoped email revision. Express supplies its user/email IDs, source revision, sender metadata, received time, subject, and bounded plain-text body. FastAPI returns validated analysis and provider/model metadata; Express persists the result through Prisma. |
+| `POST /internal/v1/email-classification/` | Classify bounded `subject` and `bodyText` using the versioned local ML artifact. Requires the internal HMAC signature. Returns request ID, response schema version, model version, category, priority, and explicit abstention status; it is experimental and not used by the public analysis flow. |
 | `POST /internal/v1/reply-drafts/` | Generate a bounded thread reply suggestion. Express supplies owner-scoped message IDs/revisions, sender metadata, timestamps, subjects, plain-text bodies, and an optional user-authored style instruction. FastAPI returns a schema-validated suggestion, source references, uncertainty labels, and provider/model metadata; Express validates and persists it through Prisma. |
 | `POST /internal/v1/email-events` | Upsert one or more normalized email revisions into the AI index. Idempotency key is `(accountId,messageId,sourceRevision)`. Return per-message `accepted`, `alreadyCurrent`, or `retryableFailure`. |
 | `POST /internal/v1/runs` | Create a graph run. Input includes MailPilot `userId`, account/thread/message IDs, intent, instruction, and verified connection/index state. FastAPI validates identifiers and limits. |
@@ -171,3 +195,15 @@ Use stable codes: `UNAUTHENTICATED`, `FORBIDDEN`, `NOT_FOUND`, `INVALID_ARGUMENT
 ## Contract validation
 
 The implementation should validate public and private payloads at both boundaries with generated OpenAPI/JSON Schema or equivalent runtime validators. CI runs TypeScript contract tests plus Python Pydantic/OpenAPI tests against shared fixtures. Never make a breaking contract change without updating fixtures and both clients in the same change.
+
+## Proactive follow-ups
+
+All routes require an authenticated session. Mutation routes additionally require the normal CSRF header and same-origin check.
+
+| Method and path | Purpose |
+|---|---|
+| `GET /v1/follow-ups` | Return the caller's settings and source-linked suggestions available at or before the current time. |
+| `PATCH /v1/follow-ups/settings` | Validate and save opt-in state, reminder thresholds, timezone, quiet hours, and daily cap. Disabling a feature cancels its pending suggestions. |
+| `PATCH /v1/follow-ups/{followUpId}` | Complete, dismiss, or snooze an owned planned suggestion. Snoozing is limited to 90 days and respects configured quiet hours. |
+
+Follow-up suggestions are in-app only. They cannot send or draft a message, modify Gmail, or create/modify Calendar events. They retain source message and thread identifiers and commitment evidence for review.

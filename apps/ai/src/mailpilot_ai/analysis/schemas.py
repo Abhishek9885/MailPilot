@@ -58,7 +58,21 @@ class EmailActionItem(EmailAnalysisModel):
             "ISO date only when the message supports an unambiguous calendar date; otherwise null."
         ),
     )
+    due_date_basis: Literal["explicit", "inferred", "none"] = Field(
+        description=(
+            "Use explicit when the email directly states the action deadline, inferred when a date "
+            "is supported by email context but not directly attached to the action, and none when "
+            "there is no unambiguous date. A null due_date requires none; a date requires "
+            "explicit or inferred."
+        ),
+    )
     evidence: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_due_date_basis(self) -> Self:
+        if (self.due_date is None) != (self.due_date_basis == "none"):
+            raise ValueError("action item due date and basis must agree")
+        return self
 
 
 class EmailDeadlineCandidate(EmailAnalysisModel):

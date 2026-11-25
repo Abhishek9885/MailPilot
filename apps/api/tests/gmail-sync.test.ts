@@ -198,6 +198,14 @@ class MemorySyncStore implements GmailSyncRunStore {
       run.leaseExpiresAt = null;
       return copyRun(run);
     }
+    if (run.failedCount > 0) {
+      run.status = "failed";
+      run.safeErrorCode ??= "SYNC_MESSAGES_FAILED";
+      run.completedAt = now;
+      run.leaseToken = null;
+      run.leaseExpiresAt = null;
+      return copyRun(run);
+    }
     this.connection.gmailHistoryId = run.mode === "initial" ? run.startHistoryId : run.targetHistoryId;
     run.status = "completed";
     run.completedAt = now;
