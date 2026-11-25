@@ -17,11 +17,9 @@ apps/api/src/generated/prisma/
 coverage/
 htmlcov/
 
-# Local configuration and secrets
+# Local configuration, dotenv templates, and secrets
 .env
 .env.*
-!.env.example
-!.env.test.example
 *.pem
 *.key
 

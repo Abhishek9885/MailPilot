@@ -74,10 +74,9 @@ Phase 12.3 moves Gmail synchronization to a durable Node worker with Redis/BullM
 
 ## Setup
 
-From the repository root in PowerShell:
+From the repository root in PowerShell, create a local `.env` file with your own settings. The repository intentionally does not include dotenv files or templates; see the Google Cloud, LLM provider, and engineering setup guides for configuration details.
 
 ```powershell
-Copy-Item .env.example .env
 npm ci
 uv sync --project apps/ai --locked
 npm run db:up
@@ -90,7 +89,7 @@ npm run db:seed
 
 `db:up` starts only PostgreSQL; the three application services run as local development processes. Wait until `docker compose ps` reports the database as `healthy` before running migrations. Compose-managed named storage retains database files across container restarts and `npm run db:down`.
 
-The example `.env` values are local-only placeholders. Do not use them outside a developer machine. The file is ignored by Git. `DATABASE_URL` must use the same database name, username, password, and host port as the Compose settings.
+Local `.env` files are ignored by Git. `DATABASE_URL` must use the same database name, username, password, and host port as the Compose settings. Keep provider credentials only in your local environment or secret manager.
 
 Application pages require an active session. Sign-in creates a new random session token, stores only its SHA-256 hash in PostgreSQL, and sets an HttpOnly cookie. The API checks expiry and revocation on each protected request; sign-out revokes the session. Production cookies use the `__Host-` prefix, `Secure`, `HttpOnly`, and `SameSite=Lax`. The CSRF cookie is `SameSite=Strict` and is checked with the request Origin on writes.
 
@@ -101,7 +100,7 @@ The seed command is explicit and local-development-only. It refuses any target o
 The normal unit suite skips PostgreSQL integration tests unless `DATABASE_TEST_URL` is set. To run the real connectivity and migration checks against a dedicated local database:
 
 ```powershell
-Copy-Item .env.test.example .env.test
+# Create a local, ignored .env.test file with DATABASE_TEST_URL set to the dedicated loopback mailpilot_test database.
 docker compose exec -T db createdb -U mailpilot mailpilot_test
 npm run test:db
 ```
@@ -144,7 +143,7 @@ Use `npm run db:up`, `npm run db:down`, and `npm run db:logs` to manage the loca
 ## Troubleshooting
 
 - **Docker command not found or daemon unavailable:** install/start Docker Desktop with Compose v2, then check `docker info` and `docker compose version`.
-- **Database stays unhealthy:** inspect `docker compose ps` and `docker compose logs --tail=100 db`; confirm port `55432` is available and `.env` database settings match `.env.example`.
+- **Database stays unhealthy:** inspect `docker compose ps` and `docker compose logs --tail=100 db`; confirm port `55432` is available and `.env` database settings match the local PostgreSQL service in `docker-compose.yml`.
 - **API or AI readiness returns 503:** confirm PostgreSQL is healthy, `DATABASE_URL` points to `localhost:55432`, and the database is accepting connections. Then run `npm run db:deploy` if this is a new database.
 - **Database reports the wrong password after changing `.env`:** the named volume retains the original PostgreSQL initialization. Keep the original local credentials or deliberately recreate the local database volume; recreating it deletes its stored data.
 - **A service port is occupied:** stop the process using port `3000`, `4000`, `8000`, or `55432`, then restart the affected service.

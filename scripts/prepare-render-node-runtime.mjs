@@ -33,8 +33,6 @@ function removeWebTestFiles(directory) {
 
 for (const path of [
   ".github",
-  ".env.example",
-  ".env.test.example",
   "docs",
   "eval",
   "scripts",

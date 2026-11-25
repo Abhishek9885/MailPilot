@@ -11,7 +11,7 @@ This plan tracks delivery from the Phase 1 repository foundation through a produ
 **Validation commands (PowerShell, repository root):**
 
 ```powershell
-Copy-Item .env.example .env
+# Create a local .env file with your own settings; dotenv files are not included in the repository.
 npm ci
 uv sync --project apps/ai --locked
 docker compose up -d db

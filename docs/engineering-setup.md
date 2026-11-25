@@ -15,7 +15,7 @@ This scaffold uses exact direct dependency pins and committed lockfiles to keep 
 
 ## Local infrastructure and startup
 
-Docker Compose runs PostgreSQL and Redis. PostgreSQL binds host port `55432`; Redis binds `56379`, both on loopback, and both persist data in Compose-managed volumes. From the repository root, copy `.env.example` to `.env`, install dependencies with `npm ci` and `uv sync --project apps/ai --locked`, then run `npm run db:up`. Wait for both containers to report healthy before running `npm run db:generate` and `npm run db:deploy`.
+Docker Compose runs PostgreSQL and Redis. PostgreSQL binds host port `55432`; Redis binds `56379`, both on loopback, and both persist data in Compose-managed volumes. Create a local `.env` file with your own settings; dotenv files and templates are intentionally excluded from the repository. Install dependencies with `npm ci` and `uv sync --project apps/ai --locked`, then run `npm run db:up`. Wait for both containers to report healthy before running `npm run db:generate` and `npm run db:deploy`.
 
 Start all four local processes with `npm run dev:all`, or use `npm run dev:web`, `npm run dev:api`, `npm run dev:worker`, and `npm run dev:ai` in separate terminals. Docker supplies PostgreSQL and Redis. The full startup and troubleshooting steps are in the root [README](../README.md).
 
