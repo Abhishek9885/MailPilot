@@ -14,7 +14,7 @@ This scaffold uses exact direct dependency pins and committed lockfiles to keep 
 
 ## Local infrastructure and startup
 
-Docker Compose runs PostgreSQL only. It binds host port `55432` on loopback, persists data in a Compose-managed named volume, and reports readiness through `pg_isready`. From the repository root, copy `.env.example` to `.env`, install dependencies with `npm ci` and `uv sync --project apps/ai --locked`, then run `npm run db:up`. Wait for `docker compose ps` to show the database as healthy before running `npm run db:generate` and `npm run db:deploy`.
+Docker Compose runs PostgreSQL only. It binds host port `55432` on loopback, persists data in a Compose-managed named volume, and reports readiness through `pg_isready`. Create a local `.env` file with your own settings; dotenv files and templates are intentionally excluded from the repository. Install dependencies with `npm ci` and `uv sync --project apps/ai --locked`, then run `npm run db:up`. Wait for `docker compose ps` to show the database as healthy before running `npm run db:generate` and `npm run db:deploy`.
 
 Start all three local services with `npm run dev:all`, or use `npm run dev:web`, `npm run dev:api`, and `npm run dev:ai` in separate terminals. The application services are local processes; Docker is used only for PostgreSQL. The full startup and troubleshooting steps are in the root [README](../README.md).
 
