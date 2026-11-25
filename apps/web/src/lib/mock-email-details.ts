@@ -35,7 +35,7 @@ const brandReviewThread: ThreadMessage[] = [
   {
     id: "thread-message-1",
     sender: "Olivia Chen",
-    address: "olivia@northstar.design",
+    address: "olivia@mailpilot.invalid",
     dateTime: "2026-10-26T16:42:00+05:30",
     timeLabel: "Yesterday, 4:42 PM",
     direction: "incoming",
@@ -44,7 +44,7 @@ const brandReviewThread: ThreadMessage[] = [
   {
     id: "thread-message-2",
     sender: "Alex Morgan",
-    address: "alex@acmestudio.example",
+    address: "alex@mailpilot.invalid",
     dateTime: "2026-10-26T17:11:00+05:30",
     timeLabel: "Yesterday, 5:11 PM",
     direction: "outgoing",
@@ -53,7 +53,7 @@ const brandReviewThread: ThreadMessage[] = [
   {
     id: "thread-message-current",
     sender: "Olivia Chen",
-    address: "olivia@northstar.design",
+    address: "olivia@mailpilot.invalid",
     dateTime: "2026-10-27T09:42:00+05:30",
     timeLabel: "Today, 9:42 AM",
     direction: "incoming",

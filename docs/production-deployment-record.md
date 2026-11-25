@@ -1,4 +1,4 @@
-# Phase 14.3 â€” Production deployment record
+# Phase 14.3 — Production deployment record
 
 **Date:** 2026-11-25  
 **Status:** CI is green; deployment is waiting on Render billing setup and production configuration.  
@@ -23,4 +23,3 @@
 ## Required before production
 
 Follow the [CI/CD production runbook](ci-cd-production.md): get a green CI run, review and approve the paid Render resource plan, configure secrets in the Render dashboard, add least-privilege database roles and operator-only migration credentials, register the exact OAuth callback URIs, and complete a staging plus migration/restore rehearsal. Then merge a green commit, apply migrations using the documented operator-only procedure, approve the protected deployment, and run the smoke-test checklist with a dedicated account. Do not onboard production mailboxes until those checks pass.
-

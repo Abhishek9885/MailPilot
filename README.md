@@ -2,6 +2,43 @@
 
 MailPilot AI is a privacy-minded email assistant. It supports application sign-in through Google OpenID Connect with database-backed sessions, read-only Gmail synchronization, owner-scoped structured email analysis, evidence-linked reply suggestions, grounded historical email answers, source-linked tasks, persisted action approvals, and optional Google Calendar connection. Calendar event creation requires an approved exact proposal and is disabled by default. Reply suggestions remain editable and cannot be sent; Gmail sending is not implemented.
 
+## Portfolio overview
+
+MailPilot explores how an assistant can find decisions, dates, and commitments in long email threads while keeping identity, mailbox access, and consequential actions behind explicit service boundaries. The repository includes a synthetic preview workspace; it is not a public production service, and the preview inbox is not connected Gmail data.
+
+![Illustrative MailPilot inbox mockup](docs/screenshots/mailpilot-inbox.svg)
+
+*Illustrative portfolio mockup based on the synthetic UI data. It is not a capture from a running app or a connected Gmail inbox; see the [HTML source](docs/screenshots/mailpilot-inbox-preview.html).*
+
+![Illustrative MailPilot approval preview](docs/screenshots/mailpilot-approval.svg)
+
+*Approval preview uses fictional content and is not an active or executed proposal.*
+
+### System map
+
+```mermaid
+flowchart LR
+    User --> Web[Next.js UI]
+    Web -->|same-origin| API[Express API]
+    API -->|OIDC / Gmail read-only / Calendar OAuth| Google[Google APIs]
+    API --> AppDB[(PostgreSQL app schema)]
+    API --> Queue[(Redis / BullMQ)]
+    Queue --> Worker[Node worker]
+    Worker --> Google
+    Worker --> AppDB
+    API -->|signed requests; no OAuth tokens| AI[FastAPI AI service]
+    AI --> AIDB[(PostgreSQL AI schema<br/>pgvector + full text)]
+    AI --> Model[Configured model provider]
+```
+
+The browser presents the UI; Express owns identity, user scoping, Google credentials and provider effects; FastAPI owns model orchestration and retrieval without Gmail tokens. PostgreSQL is the system of record, and Redis carries background jobs. See [architecture](docs/architecture.md) and [deployment architecture](docs/deployment-architecture.md).
+
+**Technology choices:** Next.js/React/TypeScript for the typed UI and contracts; Express/TypeScript for OAuth and data ownership; FastAPI/Python for model and retrieval tooling; PostgreSQL/pgvector plus full-text search for exact and semantic lookup; LangGraph for explicit bounded workflow nodes; scikit-learn for an experimental reproducible baseline; Redis/BullMQ for sync jobs.
+
+### Demo and interview notes
+
+The [3–4 minute demo script](docs/portfolio-demo.md) uses synthetic preview data and skips live AI generation when a provider is not configured. The [interview guide](docs/portfolio-interview-guide.md) covers service boundaries, embeddings, hybrid RAG, LangGraph, the classifier, approval safeguards, and trade-offs.
+
 ## Architecture
 
 - `apps/web`: Next.js App Router, TypeScript, Tailwind CSS. Browser UI; no provider credentials.
@@ -139,3 +176,47 @@ TypeScript unit tests use Vitest. Python tests use pytest with HTTPX's async ASG
 ## Repository guidance
 
 Read [AGENTS.md](AGENTS.md) before making changes. See [docs/architecture.md](docs/architecture.md) for service ownership and [docs/roadmap.md](docs/roadmap.md) for the next implementation phases.
+
+## Portfolio evidence and limitations
+
+The recorded values below are offline synthetic fixture measurements, not production or real-mailbox benchmarks. Full methodology and per-class results are in [docs/evaluation.md](docs/evaluation.md).
+
+### Hybrid retrieval replay
+
+Seven hand-labeled queries compare vector candidate ranks with keyword/vector Reciprocal Rank Fusion (RRF, rank constant 60). The cases cover exact names, dates, invoice references, paraphrases, a no-answer query, and a foreign-owner distractor.
+
+| Metric | Vector only | Hybrid RRF |
+|---|---:|---:|
+| Recall@1 | 0.3333 | 1.0000 |
+| Precision@1 | 0.2857 | 0.8571 |
+| MRR | 0.4762 | 0.8571 |
+| Recall@3 | 1.0000 | 1.0000 |
+| Precision@3 | 0.2857 | 0.2857 |
+
+Citation correctness, citation coverage, faithfulness, and abstention precision/recall each scored 1.0 on six hand-authored supported claims and one expected abstention; no generated answer was evaluated. Rank-selection timing over 500 repeats and seven cases was 0.0007/0.0008 ms p50/p95 for vector and 0.0039/0.0044 ms for hybrid. It excludes embeddings, PostgreSQL, network, and model latency. No reranker was added.
+
+### Experimental email classifier
+
+The synthetic dataset is split by thread/duplicate group: 18 train, 9 validation, and 9 held-out test messages. TF-IDF + Logistic Regression scored 55.6% category accuracy / 51.9% macro-F1 and 55.6% priority accuracy / 41.3% macro-F1. The train-only majority baseline scored 11.1% / 2.2% for category and 22.2% / 9.1% for priority.
+
+Each category has one held-out test example, so these figures are exploratory and the classifier is not in the application request path. Local in-process prediction latency was 1.095 ms p50 / 2.113 ms p95 with the model already loaded; it excludes startup, API/network time, and production load. The LLM comparison produced no valid response because the provider was unavailable. Its quality, latency, stability, token use, and cost are unavailable; there is no measured basis to select a winner.
+
+### CI record
+
+The [production deployment record](docs/production-deployment-record.md) reports a passing GitHub Actions run with 341 tests (37 shared, 159 API, 13 web, 132 Python), including PostgreSQL/pgvector integration, plus lint, type checks, schema validation, and builds. These are the recorded CI results; checks were not rerun for this portfolio documentation update.
+
+### Security model
+
+- Express enforces authenticated user and mailbox ownership. Gmail authorization is separate from sign-in and requests read-only mailbox access.
+- FastAPI does not receive Gmail OAuth tokens. Retrieved message content is untrusted evidence, never instructions.
+- RAG answers preserve message/thread citations and abstain when evidence is insufficient.
+- Consequential actions are immutable exact-payload proposals. Approval binds to the owner and payload, expires, is audited, and is revalidated immediately before guarded execution.
+- Gmail sending is not implemented. Calendar writes are disabled by default. No real external action is part of the portfolio demo.
+
+See the [security model](docs/security.md), [security audit](docs/security-audit.md), and [action proposal contract](docs/action-proposals.md).
+
+### Cost and known limitations
+
+The dated 2026-11-25 Render plan estimate was about **$89.20/month** for one small always-on environment, before bandwidth overages, taxes, domains, and AI provider usage. It was a plan estimate only: billing was not enabled and no hosted services were provisioned. Recheck current rates before provisioning. No live model usage or provider invoice has been measured; the RAG replay made no provider calls and has no model cost result.
+
+The RAG comparison is a seven-query rank replay, not live embedding/PostgreSQL/model retrieval. The classifier test is tiny and synthetic. The offline AI suite uses hand-authored metric fixtures. There is no full browser-to-database-to-Google E2E harness and public production smoke tests have not run. Real Gmail use needs OAuth/API configuration and user consent; the preview inbox is separate from synced mail. Gmail send is unavailable and Calendar event creation is disabled by default.
