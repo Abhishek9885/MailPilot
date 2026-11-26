@@ -7,23 +7,35 @@ const starredIds = MOCK_MAIL.filter((item) => item.starred).map((item) => item.i
 
 describe("inbox mock data helpers", () => {
   it("searches across sender, address, subject, and message details", () => {
-    const matches = filterMail(inbox, {
-      query: "FIELDWORK",
-      filter: "all",
-      category: "all",
-      status: "all"
-    }, starredIds);
+    const searchIds = (query: string) =>
+      filterMail(
+        inbox,
+        {
+          query,
+          filter: "all",
+          category: "all",
+          status: "all"
+        },
+        starredIds
+      ).map((item) => item.id);
 
-    expect(matches.map((item) => item.id)).toEqual(["mail-2", "mail-6", "mail-18"]);
+    expect(searchIds("Mateo Alvarez")).toEqual(["mail-2"]);
+    expect(searchIds("mateo@mailpilot.invalid")).toEqual(["mail-2"]);
+    expect(searchIds("Updated client timeline")).toEqual(["mail-2"]);
+    expect(searchIds("revised rollout")).toEqual(["mail-2"]);
   });
 
   it("combines priority, category, and status filters", () => {
-    const matches = filterMail(inbox, {
-      query: "",
-      filter: "priority",
-      category: "Finance",
-      status: "Needs reply"
-    }, starredIds);
+    const matches = filterMail(
+      inbox,
+      {
+        query: "",
+        filter: "priority",
+        category: "Finance",
+        status: "Needs reply"
+      },
+      starredIds
+    );
 
     expect(matches.map((item) => item.id)).toEqual(["mail-5"]);
   });
