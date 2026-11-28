@@ -1,6 +1,7 @@
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from time import perf_counter
 from uuid import UUID, uuid4
 
 import structlog
@@ -8,7 +9,8 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from psycopg.rows import dict_row
+from psycopg import AsyncConnection
+from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import RequestResponseEndpoint
@@ -16,6 +18,11 @@ from starlette.responses import Response
 
 from mailpilot_ai.analysis.router import router as email_analysis_router
 from mailpilot_ai.analysis.service import EmailAnalysisInputError, EmailAnalysisOutputError
+from mailpilot_ai.classification.router import router as email_classification_router
+from mailpilot_ai.classification.service import (
+    EmailClassifierUnavailableError,
+    get_email_classifier,
+)
 from mailpilot_ai.config import get_settings
 from mailpilot_ai.database import check_database, psycopg_connection_url
 from mailpilot_ai.embeddings import EmbeddingError
@@ -53,16 +60,17 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         "autocommit": True,
         "row_factory": dict_row,
         "options": "-c search_path=ai,public",
+        "connect_timeout": 5,
     }
-    conninfo = psycopg_connection_url(str(settings.database_url))
-    pool = AsyncConnectionPool(
+    conninfo = psycopg_connection_url(str(settings.database_connection_url))
+    pool: AsyncConnectionPool[AsyncConnection[DictRow]] = AsyncConnectionPool(
         conninfo=conninfo,
         min_size=1,
         max_size=10,
         kwargs=connection_options,
         open=False,
     )
-    run_lock_pool = AsyncConnectionPool(
+    run_lock_pool: AsyncConnectionPool[AsyncConnection[DictRow]] = AsyncConnectionPool(
         conninfo=conninfo,
         min_size=1,
         max_size=10,
@@ -100,6 +108,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(email_analysis_router)
+app.include_router(email_classification_router)
 app.include_router(reply_drafts_router)
 app.include_router(semantic_retrieval_router)
 app.include_router(grounded_rag_router)
@@ -114,16 +123,31 @@ async def request_context(request: Request, call_next: RequestResponseEndpoint) 
         else str(uuid4())
     )
     request.state.request_id = request_id
-    response = await call_next(request)
-    response.headers["x-request-id"] = request_id
-    logger.info(
-        "request.completed",
-        requestId=request_id,
-        method=request.method,
-        path=request.url.path,
-        statusCode=response.status_code,
-    )
-    return response
+    context_tokens = structlog.contextvars.bind_contextvars(requestId=request_id)
+    started_at = perf_counter()
+    try:
+        response = await call_next(request)
+        response.headers["x-request-id"] = request_id
+        logger.info(
+            "request.completed",
+            method=request.method,
+            path=request.url.path,
+            statusCode=response.status_code,
+            durationMs=round((perf_counter() - started_at) * 1_000, 2),
+        )
+        return response
+    except Exception as error:
+        logger.error(
+            "request.failed",
+            method=request.method,
+            path=request.url.path,
+            code="INTERNAL",
+            errorType=type(error).__name__,
+            durationMs=round((perf_counter() - started_at) * 1_000, 2),
+        )
+        raise
+    finally:
+        structlog.contextvars.reset_contextvars(**context_tokens)
 
 
 @app.exception_handler(RequestValidationError)
@@ -321,6 +345,21 @@ async def handle_analysis_input_error(request: Request, error: EmailAnalysisInpu
     )
 
 
+@app.exception_handler(EmailClassifierUnavailableError)
+async def handle_classifier_unavailable(
+    request: Request, error: EmailClassifierUnavailableError
+) -> Response:
+    request_id = getattr(request.state, "request_id", str(uuid4()))
+    logger.error("email_classification.model_unavailable", requestId=request_id, code=error.code)
+    return error_response(
+        status_code=503,
+        code=error.code,
+        message=str(error),
+        request_id=request_id,
+        retryable=True,
+    )
+
+
 @app.exception_handler(ReplyDraftOutputError)
 async def handle_reply_draft_output_error(
     request: Request, error: ReplyDraftOutputError
@@ -372,7 +411,7 @@ async def health_live(request: Request) -> HealthResponse:
     return HealthResponse(
         service=settings.service_name,
         status="ok",
-        requestId=request.state.request_id,
+        request_id=request.state.request_id,
     )
 
 
@@ -386,7 +425,21 @@ async def health_ready(request: Request) -> HealthResponse | JSONResponse:
         unavailable = HealthResponse(
             service=settings.service_name,
             status="unavailable",
-            requestId=request.state.request_id,
+            request_id=request.state.request_id,
+        )
+        return JSONResponse(
+            status_code=503,
+            content=unavailable.model_dump(mode="json", by_alias=True),
+            headers={"x-request-id": request.state.request_id},
+        )
+    try:
+        get_email_classifier()
+    except EmailClassifierUnavailableError:
+        logger.warning("health.classifier_unavailable", requestId=request.state.request_id)
+        unavailable = HealthResponse(
+            service=settings.service_name,
+            status="unavailable",
+            request_id=request.state.request_id,
         )
         return JSONResponse(
             status_code=503,
@@ -396,7 +449,7 @@ async def health_ready(request: Request) -> HealthResponse | JSONResponse:
     return HealthResponse(
         service=settings.service_name,
         status="ok",
-        requestId=request.state.request_id,
+        request_id=request.state.request_id,
     )
 
 

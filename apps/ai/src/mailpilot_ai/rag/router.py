@@ -1,5 +1,6 @@
 from typing import Annotated, cast
 
+import structlog
 from fastapi import APIRouter, Depends, Request
 from langgraph.graph.state import CompiledStateGraph
 
@@ -85,16 +86,20 @@ async def answer_question(
         "top_k": request.top_k,
         "filters": request.filters,
     }
-    execution = await execute_persistent_rag_workflow(
-        graph=graph,
-        workflow_input=graph_input,
-        context=RAGWorkflowContext(
-            answer_service=answer_service,
-            planning_service=RAGIntentPlanningService(provider=llm_provider),
-            tool_registry=ReadOnlyRAGToolRegistry(answer_service=answer_service),
-        ),
-        resume=request.resume,
-        request_id=str(getattr(http_request.state, "request_id", "unknown")),
-        run_lock=run_lock,
-    )
-    return execution.answer
+    context_tokens = structlog.contextvars.bind_contextvars(runId=str(request.run_id))
+    try:
+        execution = await execute_persistent_rag_workflow(
+            graph=graph,
+            workflow_input=graph_input,
+            context=RAGWorkflowContext(
+                answer_service=answer_service,
+                planning_service=RAGIntentPlanningService(provider=llm_provider),
+                tool_registry=ReadOnlyRAGToolRegistry(answer_service=answer_service),
+            ),
+            resume=request.resume,
+            request_id=str(getattr(http_request.state, "request_id", "unknown")),
+            run_lock=run_lock,
+        )
+        return execution.answer
+    finally:
+        structlog.contextvars.reset_contextvars(**context_tokens)

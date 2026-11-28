@@ -16,7 +16,7 @@ def psycopg_connection_url(database_url: str) -> str:
 async def check_database() -> None:
     settings = get_settings()
     async with await AsyncConnection.connect(
-        psycopg_connection_url(str(settings.database_url)),
+        psycopg_connection_url(str(settings.database_connection_url)),
         connect_timeout=2,
     ) as connection, connection.cursor() as cursor:
         await cursor.execute("SELECT 1")

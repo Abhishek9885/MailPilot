@@ -4,12 +4,11 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 from mailpilot_ai.chunking import EmailChunk, EmailChunkSource, chunk_emails
+from mailpilot_ai.email_indexing.models import EmailIndexFailure, EmailIndexReport
 from mailpilot_ai.embeddings import EmbeddingProvider
 from mailpilot_ai.embeddings.errors import EmbeddingError
-from mailpilot_ai.email_indexing.models import EmailIndexFailure, EmailIndexReport
 from mailpilot_ai.vector_store import PostgresEmbeddingStore, VectorStoreChunkRef
 from mailpilot_ai.vector_store.errors import VectorStoreError
-
 
 ClaimResult = Literal["claimed", "completed", "in_progress"]
 
@@ -95,8 +94,6 @@ class EmailEmbeddingPipeline:
         failures: list[EmailIndexFailure] = []
         for group in groups.values():
             source = group[0]
-            if source is None:
-                continue
             try:
                 report = await self._process_one(source, group)
                 if report[0] == "skipped":
@@ -173,7 +170,8 @@ class EmailEmbeddingPipeline:
                 chunks=references,
             )
             missing_indexes = [
-                index for index, reference in enumerate(references)
+                index
+                for index, reference in enumerate(references)
                 if reference.chunk_id not in existing
             ]
             model_version: str | None = (

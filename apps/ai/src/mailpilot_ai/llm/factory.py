@@ -7,6 +7,7 @@ from mailpilot_ai.config import Settings
 from mailpilot_ai.llm.contracts import LLMProvider
 from mailpilot_ai.llm.errors import LLMError
 from mailpilot_ai.llm.openai_responses import OpenAIResponsesProvider
+from mailpilot_ai.observability import InstrumentedLLMProvider
 
 AsyncSleep = Callable[[float], Awaitable[None]]
 
@@ -25,9 +26,11 @@ def create_llm_provider(
             "LLM_CONFIGURATION_INVALID",
             "OPENAI_API_KEY is required to call the configured provider",
         )
-    return OpenAIResponsesProvider(
-        settings,
-        transport=transport,
-        sleep=sleep,
-        random_value=random_value,
+    return InstrumentedLLMProvider(
+        OpenAIResponsesProvider(
+            settings,
+            transport=transport,
+            sleep=sleep,
+            random_value=random_value,
+        )
     )

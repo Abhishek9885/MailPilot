@@ -3,6 +3,7 @@ export interface GmailOAuthTransaction {
   nonce: string;
   codeVerifier: string;
   issuedAt: number;
+  sessionId: string;
   userId: string;
   returnTo: string;
 }

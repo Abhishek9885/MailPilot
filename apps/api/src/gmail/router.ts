@@ -4,6 +4,7 @@ import { GmailConnectionResponseSchema } from "@mailpilot/shared";
 import type { Logger } from "pino";
 import { appendCookie, expireCookie, readCookie } from "../auth/cookies.js";
 import { createRequireAuthentication, createRequireCsrf } from "../auth/middleware.js";
+import { matchesCurrentOAuthSession } from "../auth/oauth-session.js";
 import type { AuthStore } from "../auth/types.js";
 import { apiEnvironment } from "../environment.js";
 import { ApiError } from "../errors.js";
@@ -18,6 +19,7 @@ import {
 import type { GmailConnectionStore, GmailOAuthClient } from "./types.js";
 
 const GMAIL_SCOPE = "openid email https://www.googleapis.com/auth/gmail.readonly";
+const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
 const GMAIL_TRANSACTION_TTL_SECONDS = 600;
 const GMAIL_CALLBACK_PATH = "/v1/oauth/google/callback";
 
@@ -65,6 +67,7 @@ export function createGmailRouter(dependencies: GmailRouterDependencies): Router
       nonce: randomBytes(32).toString("base64url"),
       codeVerifier: randomBytes(48).toString("base64url"),
       issuedAt: currentTime.getTime(),
+      sessionId: authContext.sessionId,
       userId: authContext.userId,
       returnTo: normalizeReturnPath(request.query.returnTo)
     };
@@ -200,6 +203,29 @@ export function createGmailCallbackRouter(dependencies: GmailRouterDependencies)
       return;
     }
 
+    try {
+      const sessionMatches = await matchesCurrentOAuthSession({
+        authStore: dependencies.authStore,
+        cookieHeader: request.headers.cookie,
+        secureCookies,
+        sessionId: transaction.sessionId,
+        userId: transaction.userId,
+        now: currentTime
+      });
+      if (!sessionMatches) {
+        logger.warn({ requestId: response.locals.requestId }, "gmail.callback_session_mismatch");
+        response.redirect(303, errorRedirectUrl(webOrigin, transaction.returnTo, "invalid_state"));
+        return;
+      }
+    } catch (error: unknown) {
+      logger.error({
+        requestId: response.locals.requestId,
+        errorType: error instanceof Error ? error.name : "UnknownError"
+      }, "gmail.callback_session_check_failed");
+      response.redirect(303, errorRedirectUrl(webOrigin, transaction.returnTo, "oauth_failed"));
+      return;
+    }
+
     if (typeof request.query.error === "string") {
       const isDenied = request.query.error === "access_denied";
       logger.warn(
@@ -227,6 +253,15 @@ export function createGmailCallbackRouter(dependencies: GmailRouterDependencies)
         nonce: transaction.nonce,
         codeVerifier: transaction.codeVerifier
       });
+
+      if (!exchange.emailVerified) {
+        response.redirect(303, errorRedirectUrl(webOrigin, transaction.returnTo, "unverified_account"));
+        return;
+      }
+      if (!exchange.grantedScopes.includes(GMAIL_READONLY_SCOPE)) {
+        response.redirect(303, errorRedirectUrl(webOrigin, transaction.returnTo, "scope_missing"));
+        return;
+      }
 
       await dependencies.store.connectGmail({
         userId: transaction.userId,

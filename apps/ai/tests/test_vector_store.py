@@ -92,25 +92,38 @@ async def _create_source_chunk(
         connection.cursor() as cursor,
     ):
         await cursor.execute(
-            "INSERT INTO app.users (id, email_normalized) VALUES (%s, %s)",
+            """
+                INSERT INTO app.users (id, email_normalized, updated_at)
+                VALUES (%s, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT (id) DO NOTHING
+                """,
             (owner_id, f"{owner_id}@example.test"),
         )
         await cursor.execute(
-            """
-                INSERT INTO app.google_connections (
-                    id, user_id, provider_subject, provider_email_normalized
-                ) VALUES (%s, %s, %s, %s)
-                """,
-            (connection_id, owner_id, f"subject-{connection_id}", f"{owner_id}@example.test"),
+            "SELECT id FROM app.google_connections WHERE user_id = %s",
+            (owner_id,),
         )
+        existing_connection = await cursor.fetchone()
+        if existing_connection is not None:
+            connection_id = existing_connection[0]
+        else:
+            await cursor.execute(
+                """
+                    INSERT INTO app.google_connections (
+                        id, user_id, provider_subject, provider_email_normalized, updated_at
+                    ) VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    """,
+                (connection_id, owner_id, f"subject-{connection_id}", f"{owner_id}@example.test"),
+            )
         await cursor.execute(
             """
                 INSERT INTO app.emails (
                     id, user_id, google_connection_id, provider_message_id,
                     provider_thread_id, sender_name, sender_email_normalized,
-                    subject, body_text, body_hash, received_at
+                    subject, body_text, body_hash, received_at, updated_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 )
                 """,
             (
@@ -185,6 +198,19 @@ async def test_migrations_are_reproducible_and_immutable(tmp_path: Path) -> None
     assert first == second
     assert first
     assert all(len(migration.checksum) == 64 for migration in first)
+
+    async with await psycopg.AsyncConnection.connect(
+        psycopg_connection_url(database_url), connect_timeout=5
+    ) as connection:
+        cursor = await connection.execute(
+            """
+            SELECT ns.nspname
+            FROM pg_extension AS ext
+            JOIN pg_namespace AS ns ON ns.oid = ext.extnamespace
+            WHERE ext.extname = 'vector'
+            """
+        )
+        assert await cursor.fetchone() == ("public",)
 
     copied_migrations = tmp_path / "migrations"
     copied_migrations.mkdir()

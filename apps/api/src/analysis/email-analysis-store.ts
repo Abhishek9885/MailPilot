@@ -7,6 +7,8 @@ import {
 } from "@mailpilot/shared";
 import { Prisma, type PrismaClient } from "../generated/prisma/client.js";
 import { ApiError } from "../errors.js";
+import { buildTaskCommitmentSyncPlan } from "../tasks/task-commitment-service.js";
+import { PrismaTaskCommitmentStore } from "../tasks/task-commitment-store.js";
 
 export interface AnalyzableEmail {
   id: string;
@@ -31,7 +33,11 @@ export interface EmailAnalysisStore {
 }
 
 export class PrismaEmailAnalysisStore implements EmailAnalysisStore {
-  public constructor(private readonly database: PrismaClient) {}
+  private readonly taskCommitmentStore: PrismaTaskCommitmentStore;
+
+  public constructor(private readonly database: PrismaClient) {
+    this.taskCommitmentStore = new PrismaTaskCommitmentStore(database);
+  }
 
   public async findEmailRevision(
     userId: string,
@@ -112,7 +118,7 @@ export class PrismaEmailAnalysisStore implements EmailAnalysisStore {
           sourceRevision: result.sourceRevision,
           deletedAt: null
         },
-        select: { id: true }
+        select: { id: true, googleConnectionId: true, providerThreadId: true }
       });
       if (!source) {
         throw new ApiError(
@@ -122,7 +128,7 @@ export class PrismaEmailAnalysisStore implements EmailAnalysisStore {
         );
       }
 
-      return transaction.analysis.upsert({
+      const record = await transaction.analysis.upsert({
         where: {
           emailId_sourceRevision_schemaVersion_modelVersion: {
             emailId: result.emailId,
@@ -157,6 +163,15 @@ export class PrismaEmailAnalysisStore implements EmailAnalysisStore {
           createdAt: true
         }
       });
+
+      const candidatePlan = buildTaskCommitmentSyncPlan(
+        result,
+        source.googleConnectionId,
+        source.providerThreadId,
+        new Date()
+      );
+      await this.taskCommitmentStore.syncAnalysis(transaction, candidatePlan);
+      return record;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
     return toStoredAnalysis(record, result);

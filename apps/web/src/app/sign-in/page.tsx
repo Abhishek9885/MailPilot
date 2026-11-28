@@ -32,6 +32,13 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
         <h1 id="sign-in-title">Sign in to your workspace</h1>
         <p className="sign-in-copy">Use your Google account to sign in. MailPilot will request only your account identity and email address.</p>
         {errorMessage && <p className="sign-in-error" role="alert">{errorMessage}</p>}
+        {errorCode === "unavailable" && (
+          <details className="sign-in-setup-help">
+            <summary>Local setup help</summary>
+            <p>Add <code>GOOGLE_OIDC_CLIENT_ID</code> and <code>GOOGLE_OIDC_CLIENT_SECRET</code> to the repository <code>.env</code> file, then restart the API.</p>
+            <p>Google Cloud authorized redirect URI: <code>http://localhost:4000/v1/auth/google/callback</code></p>
+          </details>
+        )}
         <a className="sign-in-button" href={signInUrl.toString()}>Continue with Google</a>
         <p className="sign-in-note">Signing in does not connect Gmail. You can authorize mailbox access separately from settings.</p>
       </section>

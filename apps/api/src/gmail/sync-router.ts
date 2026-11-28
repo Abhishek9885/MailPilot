@@ -48,9 +48,21 @@ export function createGmailSyncRouter(dependencies: GmailSyncRouterDependencies)
       const sync = await dependencies.service.start(
         authContext.userId,
         body.data.mode,
-        body.data.mode === "initial" ? body.data.maxMessages : undefined
+        body.data.mode === "initial" ? body.data.maxMessages : undefined,
+        typeof response.locals.requestId === "string" ? response.locals.requestId : undefined
       );
       response.status(202).json({ sync });
+    } catch (error: unknown) {
+      next(error);
+    }
+  });
+
+  router.get("/active", requireAuthentication, async (request, response, next) => {
+    try {
+      const authContext = request.authContext;
+      if (!authContext) throw new ApiError(401, "UNAUTHORIZED", "Sign-in is required");
+      const sync = await dependencies.service.getActiveProgress(authContext.userId);
+      response.status(200).json({ sync });
     } catch (error: unknown) {
       next(error);
     }
@@ -62,18 +74,6 @@ export function createGmailSyncRouter(dependencies: GmailSyncRouterDependencies)
       if (!authContext) throw new ApiError(401, "UNAUTHORIZED", "Sign-in is required");
       const syncId = parseSyncId(request.params.syncId);
       const sync = await dependencies.service.getProgress(authContext.userId, syncId);
-      response.status(200).json({ sync });
-    } catch (error: unknown) {
-      next(error);
-    }
-  });
-
-  router.post("/:syncId/step", requireAuthentication, requireCsrf, async (request, response, next) => {
-    try {
-      const authContext = request.authContext;
-      if (!authContext) throw new ApiError(401, "UNAUTHORIZED", "Sign-in is required");
-      const syncId = parseSyncId(request.params.syncId);
-      const sync = await dependencies.service.processNextBatch(authContext.userId, syncId);
       response.status(200).json({ sync });
     } catch (error: unknown) {
       next(error);

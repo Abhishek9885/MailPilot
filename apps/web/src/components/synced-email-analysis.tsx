@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { CalendarEventProposal } from "@/components/calendar-event-proposal";
 import {
   EmailAnalysisReadResponseSchema,
   ServiceErrorSchema,
@@ -34,7 +36,7 @@ function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-function AnalysisResults({ analysis }: { analysis: StoredEmailAnalysis }) {
+function AnalysisResults({ analysis, email }: { analysis: StoredEmailAnalysis; email: SyncedEmailSummary }) {
   const { analysis: result } = analysis;
   return (
     <div className="ai-workspace__content">
@@ -99,11 +101,7 @@ function AnalysisResults({ analysis }: { analysis: StoredEmailAnalysis }) {
           <h3 id="synced-analysis-events">Event candidates</h3>
           <ul className="synced-analysis__list">
             {result.eventCandidates.map((event, index) => (
-              <li key={`${event.title}-${index}`}>
-                <strong>{event.title}</strong>
-                <span>{[event.startDate, event.startTime, event.timezone, event.location].filter(Boolean).join(" · ") || "Date and time unclear"}</span>
-                <blockquote>{event.evidence}</blockquote>
-              </li>
+              <CalendarEventProposal email={email} event={event} key={`${event.title}-${index}`} />
             ))}
           </ul>
         </section>
@@ -114,7 +112,13 @@ function AnalysisResults({ analysis }: { analysis: StoredEmailAnalysis }) {
   );
 }
 
-export function SyncedEmailAnalysis() {
+export function SyncedEmailAnalysis({
+  searchQuery = "",
+  onClearSearch
+}: {
+  searchQuery?: string;
+  onClearSearch?: () => void;
+}) {
   const [emails, setEmails] = useState<SyncedEmailSummary[]>([]);
   const [listState, setListState] = useState<"loading" | "ready" | "error">("loading");
   const [listError, setListError] = useState("");
@@ -130,8 +134,21 @@ export function SyncedEmailAnalysis() {
   useEffect(() => () => analysisController.current?.abort(), []);
 
   useEffect(() => {
+    const refreshEmails = () => {
+      setListError("");
+      setListState("loading");
+      setListAttempt((attempt) => attempt + 1);
+    };
+    window.addEventListener("mailpilot:emails-synced", refreshEmails);
+    return () => window.removeEventListener("mailpilot:emails-synced", refreshEmails);
+  }, []);
+
+  useEffect(() => {
     const controller = new AbortController();
-    void fetch(new URL("/v1/emails?limit=20", webEnvironment.apiBaseUrl), {
+    const emailListUrl = new URL("/v1/emails?limit=50", webEnvironment.apiBaseUrl);
+    const requestedEmailId = new URLSearchParams(window.location.search).get("emailId");
+    if (requestedEmailId) emailListUrl.searchParams.set("emailId", requestedEmailId);
+    void fetch(emailListUrl, {
       credentials: "include",
       cache: "no-store",
       signal: controller.signal
@@ -140,6 +157,12 @@ export function SyncedEmailAnalysis() {
       const parsed = SyncedEmailListResponseSchema.safeParse(await response.json());
       if (!parsed.success) throw new Error("The email list response was invalid.");
       setEmails(parsed.data.emails);
+      if (requestedEmailId && parsed.data.emails.some((email) => email.id === requestedEmailId)) {
+        setSelectedEmailId(requestedEmailId);
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.delete("emailId");
+        window.history.replaceState(null, "", `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+      }
       setListState("ready");
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return;
@@ -149,8 +172,19 @@ export function SyncedEmailAnalysis() {
     return () => controller.abort();
   }, [listAttempt]);
 
-  const selectedEmail = emails.find((email) => email.id === selectedEmailId) ?? emails[0] ?? null;
+  const selectedEmail = selectedEmailId
+    ? emails.find((email) => email.id === selectedEmailId) ?? null
+    : emails[0] ?? null;
   const selectedEmailIdForAnalysis = selectedEmail?.id ?? null;
+  const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
+  const visibleEmails = useMemo(() => emails.filter((email) => {
+    if (!normalizedSearch) return true;
+    return [email.subject, email.senderName, email.senderEmail, ...email.labels]
+      .filter((value): value is string => value !== null)
+      .join(" ")
+      .toLocaleLowerCase()
+      .includes(normalizedSearch);
+  }), [emails, normalizedSearch]);
   useEffect(() => {
     if (!selectedEmailIdForAnalysis) return;
     const controller = new AbortController();
@@ -216,50 +250,117 @@ export function SyncedEmailAnalysis() {
     }
   };
 
-  return (
-    <Card aria-busy={listState === "loading" || analysisState === "loading" || analysisState === "generating"}
-      aria-labelledby="synced-email-analysis-title" className="ai-workspace-card synced-analysis-card">
-      <div className="ai-workspace__header">
-        <div>
-          <p className="email-detail__eyebrow">Connected mailbox</p>
-          <h2 id="synced-email-analysis-title">Email analysis</h2>
-        </div>
-        <Badge tone="blue">Review suggestions</Badge>
-      </div>
+  const selectEmail = (emailId: string) => {
+    requestVersion.current += 1;
+    analysisController.current?.abort();
+    setAnalysis(null);
+    setAnalysisState("loading");
+    setAnalysisError("");
+    setSelectedEmailId(emailId);
+  };
 
-      {listState === "loading" ? (
-        <div className="ai-workspace__loading"><LoadingRows label="Loading synced emails" rows={3} /></div>
-      ) : listState === "error" ? (
-        <ErrorState
-          description={listError}
-          onRetry={() => {
-            setListError("");
-            setListState("loading");
-            setListAttempt((attempt) => attempt + 1);
-          }}
-          title="Synced emails unavailable"
-        />
-      ) : emails.length === 0 ? (
-        <EmptyState
-          description="Connect and sync Gmail before running analysis. Sample conversations are kept separate from mailbox data."
-          icon="mail"
-          title="No synced emails yet"
-        />
-      ) : (
-        <>
+  return (
+    <div aria-busy={listState === "loading" || analysisState === "loading" || analysisState === "generating"}
+      className="synced-mailbox">
+      <Card aria-labelledby="synced-inbox-title" className="mail-card inbox-card synced-inbox-card">
+        <div className="mail-card__header">
+          <div>
+            <div className="mail-card__title-row">
+              <h2 id="synced-inbox-title">Synced emails</h2>
+              {listState === "ready" && (
+                <Badge tone="neutral">
+                  {normalizedSearch ? `${visibleEmails.length} / ${emails.length}` : emails.length}
+                </Badge>
+              )}
+            </div>
+            <p>{normalizedSearch
+              ? `Matching synced messages for “${searchQuery.trim()}”.`
+              : "Messages imported from your connected Gmail account."}</p>
+          </div>
+          <Button
+            disabled={listState === "loading"}
+            onClick={() => {
+              setListError("");
+              setListState("loading");
+              setListAttempt((attempt) => attempt + 1);
+            }}
+            variant="secondary"
+          >
+            Refresh
+          </Button>
+        </div>
+
+        {listState === "loading" ? (
+          <div className="ai-workspace__loading"><LoadingRows label="Loading synced emails" rows={4} /></div>
+        ) : listState === "error" ? (
+          <ErrorState
+            description={listError}
+            onRetry={() => {
+              setListError("");
+              setListState("loading");
+              setListAttempt((attempt) => attempt + 1);
+            }}
+            title="Synced emails unavailable"
+          />
+        ) : emails.length === 0 ? (
+          <EmptyState
+            action={<Link className="button button--primary button--md" href="/settings">Connect Gmail in settings</Link>}
+            description="Connect Gmail and run a sync. Demo conversations are kept separate from your mailbox."
+            icon="mail"
+            title="No synced emails yet"
+          />
+        ) : visibleEmails.length === 0 ? (
+          <EmptyState
+            action={onClearSearch
+              ? <Button onClick={onClearSearch} variant="secondary">Clear search</Button>
+              : undefined}
+            description="Try another sender, subject, or keyword."
+            icon="search"
+            title="No matching synced emails"
+          />
+        ) : (
+          <ul className="synced-inbox-list">
+            {visibleEmails.map((email) => (
+              <li key={email.id}>
+                <button
+                  aria-pressed={selectedEmail?.id === email.id}
+                  className={selectedEmail?.id === email.id
+                    ? "synced-inbox-list__button synced-inbox-list__button--selected"
+                    : "synced-inbox-list__button"}
+                  onClick={() => selectEmail(email.id)}
+                  type="button"
+                >
+                  <span className="synced-inbox-list__copy">
+                    <strong>{email.subject || "(No subject)"}</strong>
+                    <span>{email.senderName || email.senderEmail || "Unknown sender"}</span>
+                  </span>
+                  <span className="synced-inbox-list__meta">
+                    <time dateTime={email.receivedAt}>{formatDate(email.receivedAt)}</time>
+                    <span>{selectedEmail?.id === email.id ? "Selected" : "Select to analyze"}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      {emails.length > 0 && selectedEmail && (
+        <Card aria-labelledby="synced-email-analysis-title" className="ai-workspace-card synced-analysis-card">
+          <div className="ai-workspace__header">
+            <div>
+              <p className="email-detail__eyebrow">Connected mailbox</p>
+              <h2 id="synced-email-analysis-title">Email analysis</h2>
+            </div>
+            <Badge tone="blue">Review suggestions</Badge>
+          </div>
+
           <div className="synced-analysis__selector">
             <SelectField
               id="synced-email-selector"
               label="Email to analyze"
-              onChange={(event) => {
-                requestVersion.current += 1;
-                analysisController.current?.abort();
-                setAnalysis(null);
-                setAnalysisState("loading");
-                setAnalysisError("");
-                setSelectedEmailId(event.currentTarget.value);
-              }}
-              value={selectedEmail?.id ?? ""}
+              onChange={(event) => selectEmail(event.currentTarget.value)}
+              value={selectedEmail.id}
             >
               {emails.map((email) => (
                 <option key={email.id} value={email.id}>
@@ -267,7 +368,7 @@ export function SyncedEmailAnalysis() {
                 </option>
               ))}
             </SelectField>
-            {selectedEmail && <p>{selectedEmail.senderEmail ?? "Unknown sender"} · {formatDate(selectedEmail.receivedAt)}</p>}
+            <p>{selectedEmail.senderEmail ?? "Unknown sender"} · {formatDate(selectedEmail.receivedAt)}</p>
           </div>
 
           {analysisState === "loading" ? (
@@ -289,7 +390,7 @@ export function SyncedEmailAnalysis() {
             <div className="ai-workspace__loading">
               <p className="ai-workspace__intro">{analysis ? "Re-analyzing this email…" : "Analyzing this email…"}</p>
               <LoadingRows label="Analyzing email" rows={4} />
-              {analysis && <AnalysisResults analysis={analysis} />}
+              {analysis && <AnalysisResults analysis={analysis} email={selectedEmail} />}
               {analysis && <p className="ai-workspace__microcopy">The saved result remains available until this run completes.</p>}
             </div>
           ) : (
@@ -317,13 +418,13 @@ export function SyncedEmailAnalysis() {
                       {analysisState === "generation-error" ? "Retry analysis" : "Re-analyze"}
                     </Button>
                   </div>
-                  <AnalysisResults analysis={analysis} />
+                  <AnalysisResults analysis={analysis} email={selectedEmail} />
                 </>
               )}
             </div>
           )}
-        </>
+        </Card>
       )}
-    </Card>
+    </div>
   );
 }

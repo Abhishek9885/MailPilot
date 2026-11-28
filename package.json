@@ -11,11 +11,15 @@
     "apps/api",
     "packages/shared"
   ],
+  "overrides": {
+    "effect": "3.22.2"
+  },
   "scripts": {
     "dev:web": "npm --prefix apps/web run dev",
     "dev:api": "npm --prefix apps/api run dev",
     "dev:ai": "dotenv -e .env -- uv run --directory apps/ai --project . python -m mailpilot_ai",
-    "dev:all": "concurrently -k -n web,api,ai -c blue,green,magenta \"npm run dev:web\" \"npm --prefix apps/api run dev:serve\" \"npm run dev:ai\"",
+    "dev:worker": "npm --prefix apps/api run worker:serve",
+    "dev:all": "npm run db:generate && concurrently -k -n web,api,worker,ai -c blue,green,yellow,magenta \"npm run dev:web\" \"npm --prefix apps/api run dev:serve:run\" \"npm --prefix apps/api run worker:run\" \"npm run dev:ai\"",
     "lint": "npm run lint:ts && npm run lint:py",
     "lint:ts": "npm run lint --workspaces --if-present",
     "lint:py": "uv run --directory apps/ai --project . ruff check src tests",
@@ -27,9 +31,9 @@
     "test:ts": "npm run build --workspace @mailpilot/shared && npm run test --workspaces --if-present",
     "test:py": "uv run --directory apps/ai --project . pytest",
     "build": "npm run db:generate && npm run build --workspace @mailpilot/shared && npm run build --workspace @mailpilot/api && npm run build --workspace @mailpilot/web",
-    "db:up": "docker compose up -d db",
+    "db:up": "docker compose up -d db redis",
     "db:down": "docker compose down",
-    "db:logs": "docker compose logs -f db",
+    "db:logs": "docker compose logs -f db redis",
     "db:generate": "prisma generate",
     "db:validate": "prisma validate",
     "db:migrate": "prisma migrate dev",
@@ -38,7 +42,11 @@
     "db:seed": "prisma db seed",
     "test:db": "npm run test:db --workspace @mailpilot/api",
     "eval:analysis": "uv run --directory apps/ai --project . python scripts/evaluate_email_analysis.py",
+    "eval:offline": "uv run --directory apps/ai --project . python scripts/evaluate_ai_suite.py",
+    "eval:email-classifier": "uv run --directory apps/ai --project . python scripts/evaluate_email_classifier.py",
+    "compare:email-classifier": "uv run --directory apps/ai --project . --no-sync -- python scripts/compare_email_classifier.py",
     "eval:rag": "uv run --directory apps/ai --project . python scripts/evaluate_rag.py",
+    "train:email-classifier": "uv run --directory apps/ai --project . python scripts/train_email_classifier.py",
     "visualize:rag": "uv run --directory apps/ai --project . python scripts/render_rag_workflow.py"
   },
   "devDependencies": {
@@ -46,12 +54,12 @@
     "concurrently": "9.2.5",
     "dotenv": "16.6.1",
     "dotenv-cli": "8.0.0",
-    "eslint": "10.10.0",
+    "eslint": "10.15.0",
     "globals": "16.4.0",
     "prisma": "7.10.1",
     "tsx": "4.20.6",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.71.1",
+    "typescript-eslint": "8.74.0",
     "vitest": "4.1.12"
   }
 }

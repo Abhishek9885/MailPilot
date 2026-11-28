@@ -145,7 +145,17 @@ class MemoryReplyDraftStore implements ReplyDraftStore {
     if (userId !== this.userId) return null;
     const existing = this.saved.find((draft) => draft.id === draftId && draft.emailId === emailId);
     if (!existing) return null;
-    const updated = { ...existing, subject: subject ?? existing.subject, bodyText, edited: true };
+    const editNotice = "Evidence references may not cover statements added during manual edits.";
+    const updated = {
+      ...existing,
+      subject: subject ?? existing.subject,
+      bodyText,
+      claims: existing.claims.filter((claim) => bodyText.toLowerCase().includes(claim.claim.toLowerCase())),
+      uncertainties: existing.uncertainties.includes(editNotice)
+        ? existing.uncertainties
+        : [...existing.uncertainties.slice(0, 9), editNotice],
+      edited: true
+    };
     this.saved = this.saved.map((draft) => draft.id === draftId ? updated : draft);
     return updated;
   }

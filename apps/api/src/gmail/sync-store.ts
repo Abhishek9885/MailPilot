@@ -7,6 +7,7 @@ import {
 } from "../generated/prisma/client.js";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
+import { randomUUID } from "node:crypto";
 
 const PendingMessageIdsSchema = z.array(z.string().min(1));
 
@@ -54,6 +55,7 @@ export interface GmailSyncRunStore {
     mode: GmailSyncMode;
     startHistoryId: string;
     maxMessages: number;
+    requestId?: string;
   }): Promise<GmailSyncRunRecord>;
   getRun(userId: string, runId: string): Promise<GmailSyncRunRecord | null>;
   claimRun(userId: string, runId: string, leaseToken: string, now: Date, leaseExpiresAt: Date): Promise<GmailSyncRunRecord>;
@@ -80,6 +82,7 @@ export interface GmailSyncRunStore {
   finishStep(userId: string, runId: string, leaseToken: string, now: Date): Promise<GmailSyncRunRecord>;
   releasePartial(userId: string, runId: string, leaseToken: string, safeErrorCode: string): Promise<GmailSyncRunRecord>;
   failRun(userId: string, runId: string, leaseToken: string, safeErrorCode: string, now: Date): Promise<GmailSyncRunRecord>;
+  failAfterQueueRetries?(userId: string, runId: string, safeErrorCode: string, now: Date): Promise<GmailSyncRunRecord>;
   requireResync(userId: string, runId: string, leaseToken: string, now: Date): Promise<GmailSyncRunRecord>;
   requestCancellation(userId: string, runId: string, now: Date): Promise<GmailSyncRunRecord | null>;
   cancelActiveForConnection(userId: string, googleConnectionId: string, now: Date): Promise<void>;
@@ -108,6 +111,7 @@ export class PrismaGmailSyncRunStore implements GmailSyncRunStore {
     mode: GmailSyncMode;
     startHistoryId: string;
     maxMessages: number;
+    requestId?: string;
   }): Promise<GmailSyncRunRecord> {
     try {
       return await this.database.$transaction(async (transaction) => {
@@ -140,6 +144,20 @@ export class PrismaGmailSyncRunStore implements GmailSyncRunStore {
             startHistoryId: input.startHistoryId,
             maxMessages: input.maxMessages,
             pendingMessageIds: []
+          }
+        });
+        await transaction.jobOutboxEvent.create({
+          data: {
+            userId: input.userId,
+            jobType: "gmail_sync",
+            idempotencyKey: `gmail-sync_${run.id}`,
+            aggregateId: run.id,
+            payload: {
+              type: "gmail.sync",
+              userId: input.userId,
+              syncId: run.id,
+              requestId: input.requestId ?? randomUUID()
+            }
           }
         });
         return mapRun(run);
@@ -400,6 +418,41 @@ export class PrismaGmailSyncRunStore implements GmailSyncRunStore {
       completedAt: now,
       leaseToken: null,
       leaseExpiresAt: null
+    });
+  }
+
+  public async failAfterQueueRetries(
+    userId: string,
+    runId: string,
+    safeErrorCode: string,
+    now: Date
+  ): Promise<GmailSyncRunRecord> {
+    return this.database.$transaction(async (transaction) => {
+      const current = await transaction.gmailSyncRun.findUnique({ where: { userId_id: { userId, id: runId } } });
+      if (!current) throw new ApiError(404, "SYNC_NOT_FOUND", "Gmail sync was not found");
+      if (isTerminalStatus(mapRun(current).status)) return mapRun(current);
+
+      const cancelled = current.cancelRequestedAt !== null;
+      const updated = await transaction.gmailSyncRun.updateMany({
+        where: {
+          userId,
+          id: runId,
+          status: { in: [DatabaseSyncStatus.pending, DatabaseSyncStatus.running, DatabaseSyncStatus.partial] }
+        },
+        data: {
+          status: cancelled ? DatabaseSyncStatus.cancelled : DatabaseSyncStatus.failed,
+          activeConnectionId: null,
+          safeErrorCode: cancelled ? current.safeErrorCode : safeErrorCode,
+          completedAt: now,
+          leaseToken: null,
+          leaseExpiresAt: null
+        }
+      });
+      const run = await transaction.gmailSyncRun.findUnique({ where: { userId_id: { userId, id: runId } } });
+      if (!run || updated.count === 0 && !isTerminalStatus(mapRun(run).status)) {
+        throw new ApiError(409, "SYNC_STATE_CHANGED", "Gmail sync state changed while recovering the job");
+      }
+      return mapRun(run);
     });
   }
 

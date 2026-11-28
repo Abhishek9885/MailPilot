@@ -1,5 +1,6 @@
 from decimal import Decimal
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import Field, PostgresDsn, SecretStr, ValidationError, model_validator
@@ -15,11 +16,20 @@ class Settings(BaseSettings):
     )
 
     service_name: str = Field(default="ai", validation_alias="AI_SERVICE_NAME")
+    node_env: Literal["development", "test", "production"] = Field(
+        default="development", validation_alias="NODE_ENV"
+    )
+    ai_host: str = Field(default="127.0.0.1", validation_alias="AI_HOST")
     ai_port: int = Field(default=8000, ge=1, le=65535, validation_alias="AI_PORT")
     ai_log_level: Literal["critical", "error", "warning", "info", "debug"] = Field(
         default="info", validation_alias="AI_LOG_LEVEL"
     )
-    database_url: PostgresDsn = Field(validation_alias="DATABASE_URL")
+    database_url: PostgresDsn | None = Field(default=None, validation_alias="DATABASE_URL")
+    ai_database_url: PostgresDsn | None = Field(default=None, validation_alias="AI_DATABASE_URL")
+    classifier_artifact_dir: Path | None = Field(
+        default=None,
+        validation_alias="AI_CLASSIFIER_ARTIFACT_DIR",
+    )
     ai_internal_api_token: SecretStr | None = Field(
         default=None,
         min_length=32,
@@ -105,6 +115,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_provider_configuration(self) -> Self:
+        if self.node_env == "production" and self.ai_database_url is None:
+            raise ValueError("AI_DATABASE_URL is required in production")
+        if self.ai_database_url is None and self.database_url is None:
+            raise ValueError("AI_DATABASE_URL or DATABASE_URL is required")
+
         price_settings = (
             self.llm_input_price_usd_per_mtok,
             self.llm_output_price_usd_per_mtok,
@@ -143,6 +158,13 @@ class Settings(BaseSettings):
             )
         return self
 
+    @property
+    def database_connection_url(self) -> PostgresDsn:
+        configured_url = self.ai_database_url or self.database_url
+        if configured_url is None:
+            raise RuntimeError("AI_DATABASE_URL is required")
+        return configured_url
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
@@ -161,6 +183,7 @@ def get_settings() -> Settings:
                 (
                     name
                     for name in (
+                        "AI_DATABASE_URL",
                         "AI_EMBEDDING_DIMENSIONS",
                         "AI_EMBEDDING_PRICING_CONFIGURATION",
                         "AI_LLM_PRICING_CONFIGURATION",

@@ -3,8 +3,16 @@ import { apiEnvironment } from "./environment.js";
 import { prisma, checkDatabase } from "./database.js";
 import { logger } from "./logger.js";
 import { createApp } from "./app.js";
+import { createBackgroundHealthCheck } from "./jobs/health.js";
+import { createRedisRateLimitRuntime } from "./security/rate-limit.js";
 
-const app = createApp({ checkDatabase });
+const backgroundHealth = createBackgroundHealthCheck(apiEnvironment.REDIS_URL);
+const rateLimitRuntime = createRedisRateLimitRuntime(apiEnvironment.REDIS_URL, logger);
+const app = createApp({
+  checkDatabase,
+  checkBackgroundWorker: backgroundHealth.check,
+  rateLimitStore: rateLimitRuntime.store
+});
 const server: Server = createServer(app);
 
 server.listen(apiEnvironment.API_PORT, "0.0.0.0", () => {
@@ -29,6 +37,8 @@ async function shutdown(reason: string, exitCode = 0): Promise<void> {
     server.close(() => resolve());
   });
 
+  await backgroundHealth.close();
+  await rateLimitRuntime.close();
   await prisma.$disconnect();
   clearTimeout(forceExit);
   logger.info({ reason }, "server.shutdown.completed");

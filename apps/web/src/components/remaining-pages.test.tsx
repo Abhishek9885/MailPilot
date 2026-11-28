@@ -3,8 +3,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { AgentPage, ActivityPage, ApprovalsPage, SettingsPage, TasksPage } from "./remaining-pages";
 import { approvalReducer } from "@/lib/approval-state";
-import { MOCK_MAIL } from "@/lib/mock-mail";
-import { filterTasks } from "@/lib/workspace-page-utils";
 
 describe("remaining workspace pages", () => {
   it("labels agent suggestions and keeps execution disabled", () => {
@@ -18,14 +16,12 @@ describe("remaining workspace pages", () => {
     expect(markup).toContain("Execution disabled");
   });
 
-  it("renders named approval actions and a local-only review explanation", () => {
+  it("renders saved approval review state and guarded Calendar execution copy", () => {
     const markup = renderToStaticMarkup(createElement(ApprovalsPage));
 
-    expect(markup).toContain('aria-label="Reply suggestions awaiting review"');
-    expect(markup).toContain("Approve in preview");
-    expect(markup).toContain("Reject suggestion");
-    expect(markup).toContain("It does not send a message");
-    expect(markup).toContain('aria-live="polite"');
+    expect(markup).toContain("Review the exact proposed action");
+    expect(markup).toContain("Calendar events are created only after a separate approval and an explicit create action.");
+    expect(markup).toContain("Loading saved action proposals");
   });
 
   it("keeps approval and rejection decisions stable per suggestion", () => {
@@ -39,15 +35,13 @@ describe("remaining workspace pages", () => {
     expect(approvalReducer(approved, { type: "reset" })).toEqual({});
   });
 
-  it("exposes accessible task filters and filters overdue and completed samples", () => {
-    const tasks = MOCK_MAIL.filter((item) => item.view === "tasks");
-    const markup = renderToStaticMarkup(createElement(TasksPage, { onOpenEmail: () => undefined }));
+  it("loads persisted tasks instead of showing preview fixtures", () => {
+    const markup = renderToStaticMarkup(createElement(TasksPage));
 
-    expect(markup).toContain('aria-label="Filter tasks by status"');
-    expect(markup).toContain('aria-pressed="true"');
-    expect(filterTasks(tasks, "Overdue").map((task) => task.id)).toEqual(["task-4"]);
-    expect(filterTasks(tasks, "Complete").map((task) => task.id)).toEqual(["task-5"]);
-    expect(filterTasks(tasks, "open").every((task) => task.status !== "Complete")).toBe(true);
+    expect(markup).toContain("Tasks from conversations");
+    expect(markup).toContain("AI action items are proposals");
+    expect(markup).toContain("Loading saved tasks");
+    expect(markup).not.toContain("sample data");
   });
 
   it("renders an ordered, timestamped activity history with source actions", () => {

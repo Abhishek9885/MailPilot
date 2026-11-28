@@ -153,6 +153,7 @@ class FakeEmailAnalysisClient implements EmailAnalysisClient {
           task: "Send the report",
           owner: "user",
           dueDate: "2026-11-02",
+          dueDateBasis: "explicit",
           evidence: "Please send the report by Monday."
         }],
         deadlines: [],
@@ -240,9 +241,10 @@ describe("email analysis route", () => {
 
     expect(first.status).toBe(200);
     expect(saved.status).toBe(200);
-    expect(saved.body.analysis.id).toBe(emailStore.stored?.id);
+    expect(saved.body.analysis.id).toBe(first.body.analysis.id);
     expect(reanalyzed.status).toBe(200);
     expect(analyzer.calls).toBe(2);
+    expect(reanalyzed.body.analysis.id).toBe(emailStore.stored?.id);
   });
 
   it("hides foreign and missing email IDs behind the same not-found response", async () => {

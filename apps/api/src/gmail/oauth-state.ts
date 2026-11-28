@@ -9,6 +9,7 @@ const GmailOAuthTransactionSchema = z.object({
   nonce: z.string().min(32).max(256),
   codeVerifier: z.string().min(43).max(128),
   issuedAt: z.number().int().nonnegative(),
+  sessionId: z.string().uuid(),
   userId: z.string().uuid(),
   returnTo: z.string().max(64)
 });

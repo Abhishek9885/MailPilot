@@ -9,7 +9,7 @@ export function createEmailRouter(service: EmailQueryService): Router {
     try {
       const authContext = request.authContext;
       if (!authContext) throw new ApiError(401, "UNAUTHORIZED", "Sign-in is required");
-      const emails = await service.list(authContext.userId, request.query.limit);
+      const emails = await service.list(authContext.userId, request.query.limit, request.query.emailId);
       response.status(200).json(emails);
     } catch (error: unknown) {
       next(error);
