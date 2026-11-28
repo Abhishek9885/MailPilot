@@ -6,7 +6,7 @@ This plan tracks delivery from the Phase 1 repository foundation through a produ
 
 **Deliver:** npm workspaces for Next.js, Express, and shared TypeScript; FastAPI package and `uv.lock`; Prisma schema and pgvector migration; Docker Compose PostgreSQL; environment validation; health endpoints; request IDs, structured logging, centralized errors, graceful shutdown; baseline tests and setup/security documentation. No OAuth, Gmail access, model calls, or background jobs.
 
-**Acceptance criteria:** a clean checkout installs from committed lockfiles; all three applications start with local environment placeholders; web/API/AI liveness endpoints return 200 and request IDs; API/AI readiness endpoints return 200 only when PostgreSQL answers `SELECT 1`; the initial migration enables pgvector; lint, strict type checks, tests, build, and Prisma validation pass; `.env` and generated secrets remain untracked.
+**Acceptance criteria:** a clean checkout installs from committed lockfiles; all three applications start with locally configured environment settings; web/API/AI liveness endpoints return 200 and request IDs; API/AI readiness endpoints return 200 only when PostgreSQL answers `SELECT 1`; the initial migration enables pgvector; lint, strict type checks, tests, build, and Prisma validation pass; `.env` and generated secrets remain untracked.
 
 **Validation commands (PowerShell, repository root):**
 
